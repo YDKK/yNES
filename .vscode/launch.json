@@ -1,0 +1,70 @@
+{
+  // IntelliSense を使用して利用可能な属性を学べます。
+  // 既存の属性の説明をホバーして表示します。
+  // 詳細情報は次を確認してください: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug executable 'y_nes_win' (vsdbg)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "preLaunchTask": "build debug",
+      "program": "./target/debug/y_nes_win.exe",
+      "args": [
+        "--nocapture"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "internalConsoleOptions": "openOnSessionStart",
+      "sourceFileMap": {
+        "c:/projects/": "${env:HOMEPATH}/scoop/apps/rustup-msvc/current/.rustup/toolchains/stable-x86_64-pc-windows-msvc/lib/rustlib/src/",
+      },
+      "logging": {
+        "trace": false,
+        "exceptions": false,
+        "moduleLoad": false,
+        "traceResponse": false,
+        "engineLogging": false,
+        "programOutput": true,
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug executable 'y_nes_win'",
+      "cargo": {
+        "args": [
+          "build",
+          "--package=y_nes"
+        ],
+        "filter": {
+          "name": "y_nes_win",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in executable 'y_nes'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--bin=y_nes",
+          "--package=y_nes"
+        ],
+        "filter": {
+          "name": "y_nes",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  // See https://go.microsoft.com/fwlink/?LinkId=733558
+  // for the documentation about the tasks.json format
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "shell",
+      "label": "build debug",
+      "command": "cargo",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "args": [
+        "build",
+        "--package=y_nes"
+      ],
+    "problemMatcher": [
+        "$rustc"
+      ]
+    },
+    {
+      "type": "shell",
+      "label": "build release",
+      "command": "cargo",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "args": [
+        "build",
+        "--package=y_nes",
+        "--release"
+      ],
+    "problemMatcher": [
+        "$rustc"
+      ]
+    }
+  ]
+}

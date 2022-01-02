@@ -1,0 +1,21 @@
+menu MENU {
+  POPUP "File(&F)" {
+    MENUITEM "Open(&O)" , 100
+  }
+  POPUP "View(&E)" {
+    POPUP "Size(&S)" {
+      MENUITEM "100%(&1)" , 200
+      MENUITEM "200%(&2)" , 201
+      MENUITEM "300%(&3)" , 202
+      MENUITEM "400%(&4)" , 203
+      MENUITEM "500%(&5)" , 204
+    }
+  }
+  POPUP "Speed(&S)" {
+    MENUITEM "Clock Base(&0)" , 300
+    MENUITEM "100%(&1)" , 301
+  }
+  POPUP "Help(&H)" {
+    MENUITEM "About(&A)" , 60000
+  }
+}
