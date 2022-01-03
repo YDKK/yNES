@@ -14,45 +14,45 @@ struct VRam {
   attribute_table_3: Box<[u8; 0x40]>,
   background_palette: Box<[u8; 0x10]>,
   sprite_palette: Box<[u8; 0x10]>,
-  sprite_memory: Box<[u8; 0x20]>, //?
+  sprite_memory: Box<[u8; 0x100]>,
 }
 
 impl VRam {
   fn read(&self, rom: &Rom, addr: u16) -> u8 {
+    let addr = addr as usize;
     match addr {
-      0x0000..=0x0FFF => rom.get_chr()[addr as usize],
-      0x1000..=0x1FFF => rom.get_chr()[(addr - 0x1000) as usize],
-      0x2000..=0x23BF => self.name_table_0[(addr - 0x2000) as usize],
-      0x23C0..=0x23FF => self.attribute_table_0[((addr - 0x23C0) & 0x3F) as usize],
-      0x2400..=0x27BF => self.name_table_1[((addr - 0x2400) & 0x3BF) as usize],
-      0x27C0..=0x27FF => self.attribute_table_1[((addr - 0x27C0) & 0x3F) as usize],
-      0x2800..=0x2BBF => self.name_table_2[((addr - 0x2800) & 0x3BF) as usize],
-      0x2BC0..=0x2BFF => self.attribute_table_2[((addr - 0x2BC0) & 0x3F) as usize],
-      0x2C00..=0x2FBF => self.name_table_3[((addr - 0x2C00) & 0x3BF) as usize],
-      0x2FC0..=0x2FFF => self.attribute_table_3[((addr - 0x2FC0) & 0x3F) as usize],
-      0x3000..=0x3EFF => self.read(rom, addr - 0x1000),
-      0x3F00..=0x3F0F => self.background_palette[((addr - 0x3F00) & 0x0F) as usize],
-      0x3F10..=0x3F1F => self.sprite_palette[((addr - 0x3F10) & 0x0F) as usize],
-      0x3F20..=0x3FFF => self.read(rom, addr - 0x0020),
+      0x0000..=0x0FFF => rom.get_chr()[addr],
+      0x1000..=0x1FFF => rom.get_chr()[addr - 0x1000],
+      0x2000..=0x23BF => self.name_table_0[addr - 0x2000],
+      0x23C0..=0x23FF => self.attribute_table_0[addr - 0x23C0],
+      0x2400..=0x27BF => self.name_table_1[addr - 0x2400],
+      0x27C0..=0x27FF => self.attribute_table_1[addr - 0x27C0],
+      0x2800..=0x2BBF => self.name_table_2[addr - 0x2800],
+      0x2BC0..=0x2BFF => self.attribute_table_2[addr - 0x2BC0],
+      0x2C00..=0x2FBF => self.name_table_3[addr - 0x2C00],
+      0x2FC0..=0x2FFF => self.attribute_table_3[addr - 0x2FC0],
+      0x3000..=0x3EFF => self.read(rom, (addr - 0x1000) as u16),
+      0x3F00..=0x3F0F => self.background_palette[addr - 0x3F00],
+      0x3F10..=0x3F1F => self.sprite_palette[addr - 0x3F10],
+      0x3F20..=0x3FFF => self.read(rom, (addr - 0x0020) as u16),
       _ => panic!(),
     }
   }
   fn write(&mut self, addr: u16, value: u8) {
+    let addr = addr as usize;
     match addr {
-      // 0x0000..=0xFFF => self.pattern_table_0[addr as usize] = value,
-      // 0x1000..=0x1FFF => self.pattern_table_1[(addr & 0xFFF) as usize] = value,
-      0x2000..=0x23BF => self.name_table_0[(addr & 0x3BF) as usize] = value,
-      0x23C0..=0x23FF => self.attribute_table_0[((addr - 0x23C0) & 0x3F) as usize] = value,
-      0x2400..=0x27BF => self.name_table_1[((addr - 0x2400) & 0x3BF) as usize] = value,
-      0x27C0..=0x27FF => self.attribute_table_1[((addr - 0x27C0) & 0x3F) as usize] = value,
-      0x2800..=0x2BBF => self.name_table_2[((addr - 0x2800) & 0x3BF) as usize] = value,
-      0x2BC0..=0x2BFF => self.attribute_table_2[((addr - 0x2BC0) & 0x3F) as usize] = value,
-      0x2C00..=0x2FBF => self.name_table_3[((addr - 0x2C00) & 0x3BF) as usize] = value,
-      0x2FC0..=0x2FFF => self.attribute_table_3[((addr - 0x2FC0) & 0x3F) as usize] = value,
-      0x3000..=0x3EFF => self.write(addr - 0x1000, value),
-      0x3F00..=0x3F0F => self.background_palette[((addr - 0x3F00) & 0x0F) as usize] = value,
-      0x3F10..=0x3F1F => self.sprite_palette[((addr - 0x3F10) & 0x0F) as usize] = value,
-      0x3F20..=0x3FFF => self.write(addr - 0x0020, value),
+      0x2000..=0x23BF => self.name_table_0[addr & 0x3BF] = value,
+      0x23C0..=0x23FF => self.attribute_table_0[addr - 0x23C0] = value,
+      0x2400..=0x27BF => self.name_table_1[addr - 0x2400] = value,
+      0x27C0..=0x27FF => self.attribute_table_1[addr - 0x27C0] = value,
+      0x2800..=0x2BBF => self.name_table_2[addr - 0x2800] = value,
+      0x2BC0..=0x2BFF => self.attribute_table_2[addr - 0x2BC0] = value,
+      0x2C00..=0x2FBF => self.name_table_3[addr - 0x2C00] = value,
+      0x2FC0..=0x2FFF => self.attribute_table_3[addr - 0x2FC0] = value,
+      0x3000..=0x3EFF => self.write((addr - 0x1000) as u16, value),
+      0x3F00..=0x3F0F => self.background_palette[addr - 0x3F00] = value,
+      0x3F10..=0x3F1F => self.sprite_palette[addr - 0x3F10] = value,
+      0x3F20..=0x3FFF => self.write((addr - 0x0020) as u16, value),
       _ => panic!(),
     }
   }
@@ -217,7 +217,7 @@ impl Ppu {
           attribute_table_3: Box::new([0; 0x40]),
           background_palette: Box::new([0; 0x10]),
           sprite_palette: Box::new([0; 0x10]),
-          sprite_memory: Box::new([0; 0x20]), //?
+          sprite_memory: Box::new([0; 0x100]), //?
         },
       },
       registers: Registers {
@@ -254,16 +254,66 @@ impl Ppu {
     };
     ppu
   }
+
+  fn get_pattern(&self, rom: &Rom, pattern: u8, pixel_in_tile_x: u16, pixel_in_tile_y: u16) -> u8 {
+    let pattern_addr_l = if self.registers.control_register.bg_pattern_table {
+      0x1000
+    } else {
+      0x0000
+    } + ((pattern as u16) << 4)
+      + pixel_in_tile_y;
+    let pattern_addr_h = pattern_addr_l + 0x08;
+    let pattern_l = self.bus.v_ram.read(rom, pattern_addr_l);
+    let pattern_h = self.bus.v_ram.read(rom, pattern_addr_h);
+    ((pattern_l >> (7 - pixel_in_tile_x)) & 0b01) | (((pattern_h >> (7 - pixel_in_tile_x)) << 1) & 0b10)
+  }
+
   pub fn clock(&mut self, rom: &Rom) -> bool {
     match self.current_y {
       0..=239 => match self.current_x {
         0..=255 => {
-          //BG
           let tile_x = self.current_x / 8;
-          let tile_y = (self.current_y / 8) * 0x20;
+          let tile_y = self.current_y / 8;
+          let tile_y_addr = tile_y * 0x20;
           let pixel_in_tile_x = self.current_x % 8;
           let pixel_in_tile_y = self.current_y % 8;
 
+          //スプライト
+          let mut sprite_index = 0;
+          let sprite = loop {
+            let addr = sprite_index * 4;
+            let sprite_y = self.bus.v_ram.sprite_memory[addr].saturating_add(1);
+            if (sprite_y / 8) == (tile_y as u8) {
+              let sprite_x = self.bus.v_ram.sprite_memory[addr + 3];
+              if (sprite_x / 8) == (tile_x as u8) {
+                let sprite_tile = self.bus.v_ram.sprite_memory[addr + 1];
+                let sprite_attr = self.bus.v_ram.sprite_memory[addr + 2];
+                //垂直反転
+                let pixel_in_tile_y = if sprite_attr & 0b1000_0000 == 0b1000_0000 {
+                  7 - pixel_in_tile_y
+                } else {
+                  pixel_in_tile_y
+                };
+                //水平反転
+                let pixel_in_tile_x = if sprite_attr & 0b0100_0000 == 0b0100_0000 {
+                  7 - pixel_in_tile_x
+                } else {
+                  pixel_in_tile_x
+                };
+
+                let pattern = self.get_pattern(rom, sprite_tile, pixel_in_tile_x, pixel_in_tile_y);
+                let background = sprite_attr & 0b0010_0000 == 0b0010_0000;
+                let pallet = sprite_attr & 0b11;
+                break Some((pattern, background, pallet));
+              }
+            }
+            sprite_index += 1;
+            if sprite_index == 64 {
+              break None;
+            }
+          };
+
+          //BG
           let name_base_addr = match self.registers.control_register.main_screen {
             0 => 0x2000,
             1 => 0x2400,
@@ -271,52 +321,53 @@ impl Ppu {
             3 => 0x2C00,
             _ => panic!(),
           };
-          let name_addr = name_base_addr + tile_y + tile_x;
+          let name_addr = name_base_addr + tile_y_addr + tile_x;
           let name = self.bus.v_ram.read(rom, name_addr);
-          let pattern_addr_l = if self.registers.control_register.bg_pattern_table {
-            0x1000
-          } else {
-            0x0000
-          } + ((name as u16) << 4)
-            + pixel_in_tile_y;
-          let pattern_addr_h = pattern_addr_l + 0x08;
-          let pattern_l = self.bus.v_ram.read(rom, pattern_addr_l);
-          let pattern_h = self.bus.v_ram.read(rom, pattern_addr_h);
-          let pattern =
-            ((pattern_l >> (7 - pixel_in_tile_x)) & 0b01) | (((pattern_h >> (7 - pixel_in_tile_x)) << 1) & 0b10);
+          let mut pattern = self.get_pattern(rom, name, pixel_in_tile_x, pixel_in_tile_y);
 
-          let attribute_block_x = tile_x / 4;
-          let attribute_block_y = tile_y / 4;
-          let attribute_base_addr = match self.registers.control_register.main_screen {
-            0 => 0x23C0,
-            1 => 0x27C0,
-            2 => 0x2BC0,
-            3 => 0x2FC0,
-            _ => panic!(),
+          let pallet = if sprite.is_none() || sprite.unwrap().1 || sprite.unwrap().0 == 0 {
+            //BGを描画する
+            let attribute_block_x = tile_x / 4;
+            let attribute_block_y = tile_y_addr / 4;
+            let attribute_base_addr = match self.registers.control_register.main_screen {
+              0 => 0x23C0,
+              1 => 0x27C0,
+              2 => 0x2BC0,
+              3 => 0x2FC0,
+              _ => panic!(),
+            };
+            let attribute_addr = attribute_base_addr + attribute_block_y + attribute_block_x;
+            let attribute = self.bus.v_ram.read(rom, attribute_addr);
+            let block = ((self.current_x / 32) % 2) + (((self.current_y / 32) % 2) * 2);
+            (attribute >> (block * 2)) & 0b11
+          } else {
+            //スプライトを描画する
+            pattern = sprite.unwrap().0;
+            sprite.unwrap().2
           };
-          let attribute_addr = attribute_base_addr + attribute_block_y + attribute_block_x;
-          let attribute = self.bus.v_ram.read(rom, attribute_addr);
-          let block = ((self.current_x / 32) % 2) + (((self.current_y / 32) % 2) * 2);
-          let block_attribute = (attribute >> (block * 2)) & 0b11;
-          let pallet_addr = 0x3F00 + (block_attribute as u16) * 4;
+
+          let pallet_addr = 0x3F00 + ((pallet as u16) << 2);
           let colors = [
             self.bus.v_ram.read(rom, pallet_addr),
             self.bus.v_ram.read(rom, pallet_addr + 1),
             self.bus.v_ram.read(rom, pallet_addr + 2),
             self.bus.v_ram.read(rom, pallet_addr + 3),
           ];
-
           let pixel = colors[pattern as usize];
-
-          //スプライト
 
           self.frame[(self.current_y * 256 + self.current_x) as usize] = pixel;
         }
         256..=340 => {} //Hblank
         _ => panic!(),
       },
-      240 => {}       //post-render
-      241..=260 => {} //Vblank
+      240 => {} //post-render
+      241 => {
+        //Vblank
+        if self.current_x == 0 {
+          self.registers.status_register.v_blank = true;
+        }
+      }
+      242..=260 => {} //Vblank
       261 => {}       //pre-render scanline
       _ => panic!(),
     }

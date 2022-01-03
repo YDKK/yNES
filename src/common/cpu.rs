@@ -6,7 +6,6 @@ mod bus;
 struct ProcessorStatusRegister {
   n: bool,
   v: bool,
-  o: bool, //One
   b: bool,
   d: bool,
   i: bool,
@@ -22,9 +21,7 @@ impl ProcessorStatusRegister {
     if self.v {
       value |= 0b0100_0000;
     }
-    if self.o {
-      value |= 0b0010_0000;
-    }
+    value |= 0b0010_0000;
     if self.b {
       value |= 0b0001_0000;
     }
@@ -45,7 +42,6 @@ impl ProcessorStatusRegister {
   fn write(&mut self, value: u8) {
     self.n = (value & 0b1000_0000) == 0b1000_0000;
     self.v = (value & 0b0100_0000) == 0b0100_0000;
-    self.o = (value & 0b0010_0000) == 0b0010_0000;
     self.b = (value & 0b0001_0000) == 0b0001_0000;
     self.d = (value & 0b0000_1000) == 0b0000_1000;
     self.i = (value & 0b0000_0100) == 0b0000_0100;
@@ -68,24 +64,21 @@ pub struct Cpu {
   addr_h: u8,
   immediate_operand: u8,
   is_immediate: bool,
+  is_accumulator: bool,
+  reset: bool,
+  nmi: bool,
+  irq: bool,
+  adressing_overflow: bool,
 }
 
+#[derive(Debug)]
 enum CpuState {
   Reset,
+  Nmi,
+  Irq,
   ReadOpcode,
   ReadOperand,
   ExecuteInstruction,
-}
-
-impl std::fmt::Display for CpuState {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-    match self {
-      CpuState::Reset => write!(f, "Reset"),
-      CpuState::ReadOpcode => write!(f, "ReadOpcode"),
-      CpuState::ReadOperand => write!(f, "ReadOperand"),
-      CpuState::ExecuteInstruction => write!(f, "ExecuteInstruction"),
-    }
-  }
 }
 
 impl Cpu {
@@ -96,16 +89,7 @@ impl Cpu {
       y: 0,
       pc: 0,
       sp: 0xFD,
-      p: ProcessorStatusRegister {
-        n: false,
-        v: false,
-        o: true, //One
-        b: true,
-        d: false,
-        i: true,
-        z: false,
-        c: false,
-      },
+      p: ProcessorStatusRegister { n: false, v: false, b: true, d: false, i: true, z: false, c: false },
       bus: bus::Bus::new(),
       op: 0,
       state: CpuState::Reset,
@@ -114,19 +98,31 @@ impl Cpu {
       addr_h: 0,
       immediate_operand: 0,
       is_immediate: false,
+      is_accumulator: false,
+      reset: false,
+      nmi: false,
+      irq: false,
+      adressing_overflow: false,
     }
   }
+  pub fn reset(&mut self) {
+    self.reset = true;
+  }
+  pub fn nmi(&mut self) {
+    self.nmi = true;
+  }
+  pub fn irq(&mut self) {
+    self.irq = true;
+  }
   pub fn clock(&mut self, rom: &Rom, ppu: &mut Ppu) {
-    println!("PC:{:x} OP:{:x} STATE:{}", self.pc, self.op, self.state);
-
     let rom = Some(rom);
     let ppu = &mut Some(ppu);
 
     match self.state {
       CpuState::Reset => {
-        self.sp = 0xFD;
-        self.p.b = true;
+        self.p.b = false;
         self.p.i = true;
+        //let addr_l = 0x00; //FOR TESTING
         let addr_l = self.bus.read(rom, ppu, 0xFFFC);
         let addr_h = self.bus.read(rom, ppu, 0xFFFD);
         self.pc = get_addr(addr_h, addr_l);
@@ -134,22 +130,162 @@ impl Cpu {
         self.step = 0;
         return;
       }
+      CpuState::Nmi => {
+        self.p.b = false;
+        self.push((self.pc >> 8) as u8);
+        self.push(self.pc as u8);
+        self.push(self.p.read());
+        self.p.i = true;
+        let addr_l = self.bus.read(rom, ppu, 0xFFFA);
+        let addr_h = self.bus.read(rom, ppu, 0xFFFB);
+        self.pc = get_addr(addr_h, addr_l);
+        self.state = CpuState::ReadOpcode;
+        self.step = 0;
+        return;
+      }
+      CpuState::Irq => {
+        //Iフラグはチェック済み
+        self.p.b = false;
+        self.push((self.pc >> 8) as u8);
+        self.push(self.pc as u8);
+        self.push(self.p.read());
+        self.p.i = true;
+        let addr_l = self.bus.read(rom, ppu, 0xFFFE);
+        let addr_h = self.bus.read(rom, ppu, 0xFFFF);
+        self.pc = get_addr(addr_h, addr_l);
+        self.state = CpuState::ReadOpcode;
+        self.step = 0;
+        return;
+      }
       CpuState::ReadOpcode => {
+        //割り込みチェック
+        if self.reset {
+          self.reset = false;
+          self.state = CpuState::Reset;
+          self.step = 0;
+          return;
+        }
+        if self.nmi {
+          self.nmi = false;
+          self.state = CpuState::Nmi;
+          self.step = 0;
+          return;
+        }
+        if self.irq {
+          self.irq = false;
+          if self.p.i == false {
+            self.state = CpuState::Irq;
+            self.step = 0;
+            return;
+          }
+        }
         self.is_immediate = false;
+        self.is_accumulator = false;
+        self.adressing_overflow = false;
         self.op = self.bus.read(rom, ppu, self.pc);
-        self.state = match INSTRUCTION_SET[self.op as usize].mode {
-          AddressingMode::Implied | AddressingMode::Accumulator | AddressingMode::Relative => {
+        let addressing_mode = &INSTRUCTION_SET[self.op as usize].mode;
+
+        //ブレークポイント
+        let brake_point: Option<u16> = None; //Some(0xD980);
+        if brake_point.is_some() && brake_point.unwrap() == self.pc {
+          println!("Hit brake_point"); //brake here
+        }
+
+        //ログ出力
+        let output_log = false;
+        if output_log {
+          let instruction = &INSTRUCTION_SET[self.op as usize].instruction;
+          let operand_1 = self.bus.read(rom, ppu, self.pc + 1);
+          let operand_2 = self.bus.read(rom, ppu, self.pc + 2);
+          match addressing_mode {
+            AddressingMode::Accumulator | AddressingMode::Implied => {
+              println!(
+                "{:04X}  {:02X}        {:?} {:<27} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
+                self.pc,
+                self.op,
+                instruction,
+                "",
+                self.a,
+                self.x,
+                self.y,
+                self.p.read(),
+                self.sp
+              );
+            }
+            AddressingMode::Immediate
+            | AddressingMode::ZeroPage
+            | AddressingMode::ZeroPageX
+            | AddressingMode::ZeroPageY
+            | AddressingMode::Relative
+            | AddressingMode::IndirectX
+            | AddressingMode::IndirectY => {
+              let operand = match addressing_mode {
+                AddressingMode::Immediate => format!("#${:02X}", operand_1),
+                AddressingMode::ZeroPage | AddressingMode::Relative => format!("${:02X}", operand_1),
+                AddressingMode::ZeroPageX => format!("${:02X},X", operand_1),
+                AddressingMode::ZeroPageY => format!("${:02X},Y", operand_1),
+                AddressingMode::IndirectX => format!("(${:02X},X)", operand_1),
+                AddressingMode::IndirectY => format!("(${:02X}),Y", operand_1),
+                _ => panic!(),
+              };
+              println!(
+                "{:04X}  {:02X} {:02X}     {:?} {:<27} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
+                self.pc,
+                self.op,
+                operand_1,
+                instruction,
+                operand,
+                self.a,
+                self.x,
+                self.y,
+                self.p.read(),
+                self.sp
+              );
+            }
+            AddressingMode::Absolute
+            | AddressingMode::AbsoluteX
+            | AddressingMode::AbsoluteY
+            | AddressingMode::Indirect => {
+              let operand = match addressing_mode {
+                AddressingMode::Absolute => format!("${:02X}{:02X}", operand_2, operand_1),
+                AddressingMode::AbsoluteX => format!("${:02X}{:02X},X", operand_2, operand_1),
+                AddressingMode::AbsoluteY => format!("${:02X}{:02X},Y", operand_2, operand_1),
+                AddressingMode::Indirect => format!("(${:02X}{:02X})", operand_2, operand_1),
+                _ => panic!(),
+              };
+              println!(
+                "{:04X}  {:02X} {:02X} {:02X}  {:?} {:<27} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
+                self.pc,
+                self.op,
+                operand_1,
+                operand_2,
+                instruction,
+                operand,
+                self.a,
+                self.x,
+                self.y,
+                self.p.read(),
+                self.sp
+              );
+            }
+          }
+        }
+
+        self.state = match addressing_mode {
+          AddressingMode::Accumulator => {
+            self.is_accumulator = true;
             CpuState::ExecuteInstruction
           }
+          AddressingMode::Implied | AddressingMode::Relative => CpuState::ExecuteInstruction,
           AddressingMode::Immediate => {
             self.pc += 1;
             self.immediate_operand = self.bus.read(rom, ppu, self.pc);
             self.is_immediate = true;
             CpuState::ExecuteInstruction
           }
-
           _ => CpuState::ReadOperand,
         };
+
         self.pc += 1;
         self.step = 0;
         return;
@@ -182,12 +318,12 @@ impl Cpu {
                     _ => panic!(),
                   });
               self.addr_l = result;
-              self.p.c = overflow;
+              self.adressing_overflow = overflow;
               self.pc += 1;
             }
             1 => {
               self.addr_h = self.bus.read(rom, ppu, self.pc);
-              if self.p.c == false {
+              if self.adressing_overflow == false {
                 self.state = CpuState::ExecuteInstruction;
                 self.step = 0;
                 self.pc += 1;
@@ -241,6 +377,10 @@ impl Cpu {
               self.addr_h = self.bus.read(rom, ppu, self.pc);
             }
             2 => {
+              let addr = get_addr(self.addr_h, self.addr_l);
+              let addr2 = get_addr(self.addr_h, self.addr_l.wrapping_add(1));
+              self.addr_l = self.bus.read(rom, ppu, addr);
+              self.addr_h = self.bus.read(rom, ppu, addr2);
               self.state = CpuState::ExecuteInstruction;
               self.step = 0;
               self.pc += 1;
@@ -250,15 +390,16 @@ impl Cpu {
           },
           AddressingMode::IndirectX => match self.step {
             0 => {
-              self.addr_h = 0x00;
+              self.addr_l = self.bus.read(rom, ppu, self.pc).wrapping_add(self.x);
             }
             1 => {
-              self.addr_l = self.bus.read(rom, ppu, self.pc).wrapping_add(self.x);
+              self.addr_h = 0x00;
             }
             2 => {
               let addr = get_addr(self.addr_h, self.addr_l);
+              let addr2 = get_addr(self.addr_h, self.addr_l.wrapping_add(1));
               self.addr_l = self.bus.read(rom, ppu, addr);
-              self.addr_h = self.bus.read(rom, ppu, addr + 1); //3サイクル目でやるのが正解っぽいけどレジスタが足りん
+              self.addr_h = self.bus.read(rom, ppu, addr2); //3サイクル目でやるのが正解っぽい気がする
             }
             3 => {
               self.state = CpuState::ExecuteInstruction;
@@ -274,11 +415,11 @@ impl Cpu {
             }
             1 => {
               let addr = get_addr(0x00, self.addr_l);
-              self.addr_h = self.bus.read(rom, ppu, addr);
+              let addr2 = get_addr(0x00, self.addr_l.wrapping_add(1));
+              self.addr_l = self.bus.read(rom, ppu, addr);
+              self.addr_h = self.bus.read(rom, ppu, addr2);
             }
             2 => {
-              let addr = get_addr(0x00, self.addr_l.wrapping_add(1));
-              self.addr_l = self.bus.read(rom, ppu, addr);
               let (result, overflow) = self.addr_l.overflowing_add(self.y);
               self.addr_l = result;
               if overflow == false {
@@ -289,7 +430,7 @@ impl Cpu {
               }
             }
             3 => {
-              self.addr_h += 1;
+              self.addr_h = self.addr_h.wrapping_add(1);
               self.state = CpuState::ExecuteInstruction;
               self.step = 0;
               self.pc += 1;
@@ -303,7 +444,7 @@ impl Cpu {
       CpuState::ExecuteInstruction => {
         match INSTRUCTION_SET[self.op as usize].instruction {
           //演算
-          Instruction::Adc => {
+          Instruction::ADC => {
             let operand = if self.is_immediate {
               self.immediate_operand
             } else {
@@ -321,12 +462,11 @@ impl Cpu {
 
             self.a = result2;
 
-            self.pc += 1;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Sbc => {
+          Instruction::SBC => {
             let operand = if self.is_immediate {
               self.immediate_operand
             } else {
@@ -338,19 +478,18 @@ impl Cpu {
             let (result2, overflow2) = result.overflowing_sub(if self.p.c { 0 } else { 1 });
 
             self.p.n = (result2 & 0x80) == 0x80;
-            self.p.v = ((self.a ^ result2) & (operand ^ result2) & 0x80) == 0x80;
+            self.p.v = ((self.a ^ operand) & (self.a ^ result2) & 0x80) == 0x80;
             self.p.z = result2 == 0;
-            self.p.c = overflow || overflow2;
+            self.p.c = !(overflow || overflow2);
 
             self.a = result2;
 
-            self.pc += 1;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
           //論理演算
-          Instruction::And => {
+          Instruction::AND => {
             let operand = if self.is_immediate {
               self.immediate_operand
             } else {
@@ -363,12 +502,11 @@ impl Cpu {
             self.p.n = (self.a & 0x80) == 0x80;
             self.p.z = self.a == 0;
 
-            self.pc += 1;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Ora => {
+          Instruction::ORA => {
             let operand = if self.is_immediate {
               self.immediate_operand
             } else {
@@ -381,12 +519,11 @@ impl Cpu {
             self.p.n = (self.a & 0x80) == 0x80;
             self.p.z = self.a == 0;
 
-            self.pc += 1;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Eor => {
+          Instruction::EOR => {
             let operand = if self.is_immediate {
               self.immediate_operand
             } else {
@@ -399,85 +536,136 @@ impl Cpu {
             self.p.n = (self.a & 0x80) == 0x80;
             self.p.z = self.a == 0;
 
-            self.pc += 1;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
           //シフト、ローテーション
-          Instruction::Asl => {
-            self.p.c = (self.a & 0x80) == 0x80;
-            self.a &= 0x7F;
-            self.a <<= 1;
+          Instruction::ASL => {
+            let addr = get_addr(self.addr_h, self.addr_l);
 
-            self.p.n = (self.a & 0x80) == 0x80;
-            self.p.z = self.a == 0;
+            let mut operand = if self.is_accumulator {
+              self.a
+            } else {
+              self.bus.read(rom, ppu, addr)
+            };
 
-            self.pc += 1;
+            self.p.c = (operand & 0x80) == 0x80;
+            operand &= 0x7F;
+            operand <<= 1;
+
+            self.p.n = (operand & 0x80) == 0x80;
+            self.p.z = operand == 0;
+
+            if self.is_accumulator {
+              self.a = operand;
+            } else {
+              self.bus.write(ppu, addr, operand);
+            }
+
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Lsr => {
-            self.p.c = (self.a & 0x01) == 0x01;
-            self.a >>= 1;
+          Instruction::LSR => {
+            let addr = get_addr(self.addr_h, self.addr_l);
 
-            self.p.n = (self.a & 0x80) == 0x80;
-            self.p.z = self.a == 0;
+            let mut operand = if self.is_accumulator {
+              self.a
+            } else {
+              self.bus.read(rom, ppu, addr)
+            };
 
-            self.pc += 1;
+            self.p.c = (operand & 0x01) == 0x01;
+            operand >>= 1;
+
+            self.p.n = (operand & 0x80) == 0x80;
+            self.p.z = operand == 0;
+
+            if self.is_accumulator {
+              self.a = operand;
+            } else {
+              self.bus.write(ppu, addr, operand);
+            }
+
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Rol => {
+          Instruction::ROL => {
+            let addr = get_addr(self.addr_h, self.addr_l);
+
+            let mut operand = if self.is_accumulator {
+              self.a
+            } else {
+              self.bus.read(rom, ppu, addr)
+            };
+
             let carry = self.p.c;
-            self.p.c = (self.a & 0x80) == 0x80;
-            self.a &= 0x7F;
-            self.a <<= 1;
-            self.a += if carry { 1 } else { 0 };
+            self.p.c = (operand & 0x80) == 0x80;
+            operand &= 0x7F;
+            operand <<= 1;
+            operand += if carry { 1 } else { 0 };
 
-            self.p.n = (self.a & 0x80) == 0x80;
-            self.p.z = self.a == 0;
+            self.p.n = (operand & 0x80) == 0x80;
+            self.p.z = operand == 0;
 
-            self.pc += 1;
+            if self.is_accumulator {
+              self.a = operand;
+            } else {
+              self.bus.write(ppu, addr, operand);
+            }
+
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Ror => {
+          Instruction::ROR => {
+            let addr = get_addr(self.addr_h, self.addr_l);
+
+            let mut operand = if self.is_accumulator {
+              self.a
+            } else {
+              self.bus.read(rom, ppu, addr)
+            };
+
             let carry = self.p.c;
-            self.p.c = (self.a & 0x01) == 0x01;
-            self.a >>= 1;
-            self.a += if carry { 0x80 } else { 0 };
+            self.p.c = (operand & 0x01) == 0x01;
+            operand >>= 1;
+            operand += if carry { 0x80 } else { 0 };
 
-            self.p.n = (self.a & 0x80) == 0x80;
-            self.p.z = self.a == 0;
+            self.p.n = (operand & 0x80) == 0x80;
+            self.p.z = operand == 0;
 
-            self.pc += 1;
+            if self.is_accumulator {
+              self.a = operand;
+            } else {
+              self.bus.write(ppu, addr, operand);
+            }
+
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
           //条件分岐
-          Instruction::Bcc
-          | Instruction::Bcs
-          | Instruction::Beq
-          | Instruction::Bne
-          | Instruction::Bvc
-          | Instruction::Bvs
-          | Instruction::Bpl
-          | Instruction::Bmi => {
+          Instruction::BCC
+          | Instruction::BCS
+          | Instruction::BEQ
+          | Instruction::BNE
+          | Instruction::BVC
+          | Instruction::BVS
+          | Instruction::BPL
+          | Instruction::BMI => {
             let jump = self.step != 0
               || match INSTRUCTION_SET[self.op as usize].instruction {
-                Instruction::Bcc => !self.p.c,
-                Instruction::Bcs => self.p.c,
-                Instruction::Beq => self.p.z,
-                Instruction::Bne => !self.p.z,
-                Instruction::Bvc => !self.p.v,
-                Instruction::Bvs => self.p.v,
-                Instruction::Bpl => !self.p.n,
-                Instruction::Bmi => self.p.n,
+                Instruction::BCC => !self.p.c,
+                Instruction::BCS => self.p.c,
+                Instruction::BEQ => self.p.z,
+                Instruction::BNE => !self.p.z,
+                Instruction::BVC => !self.p.v,
+                Instruction::BVS => self.p.v,
+                Instruction::BPL => !self.p.n,
+                Instruction::BMI => self.p.n,
                 _ => panic!(),
               };
             if jump {
@@ -511,7 +699,7 @@ impl Cpu {
             }
           }
           //ビット検査
-          Instruction::Bit => {
+          Instruction::BIT => {
             let operand = if self.is_immediate {
               self.immediate_operand
             } else {
@@ -525,13 +713,12 @@ impl Cpu {
             self.p.v = (operand & 0x40) == 0x40;
             self.p.z = result == 0;
 
-            self.pc += 1;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
           //ジャンプ
-          Instruction::Jmp => match self.step {
+          Instruction::JMP => match self.step {
             0 => {
               self.pc &= 0xFF00;
               self.pc |= self.addr_l as u16;
@@ -539,25 +726,27 @@ impl Cpu {
             1 => {
               self.pc &= 0x00FF;
               self.pc |= (self.addr_h as u16) << 8;
-
               self.state = CpuState::ReadOpcode;
               self.step = 0;
               return;
             }
             _ => panic!(),
           },
-          Instruction::Jsr => match self.step {
-            0 => self.push((self.pc >> 8) as u8),
-            1 => self.push(self.pc as u8),
-            2 => {
-              self.pc = get_addr(self.addr_h, self.addr_l);
-              self.state = CpuState::ReadOpcode;
-              self.step = 0;
-              return;
+          Instruction::JSR => {
+            let pc = self.pc.wrapping_sub(1);
+            match self.step {
+              0 => self.push((pc >> 8) as u8),
+              1 => self.push(pc as u8),
+              2 => {
+                self.pc = get_addr(self.addr_h, self.addr_l);
+                self.state = CpuState::ReadOpcode;
+                self.step = 0;
+                return;
+              }
+              _ => panic!(),
             }
-            _ => panic!(),
-          },
-          Instruction::Rts => match self.step {
+          }
+          Instruction::RTS => match self.step {
             0 => {}
             1 => {}
             2 => {
@@ -577,7 +766,7 @@ impl Cpu {
             _ => panic!(),
           },
           //割り込み
-          Instruction::Brk => match self.step {
+          Instruction::BRK => match self.step {
             0 => {
               if self.p.i {
                 self.state = CpuState::ReadOpcode;
@@ -605,7 +794,7 @@ impl Cpu {
             }
             _ => panic!(),
           },
-          Instruction::Rti => match self.step {
+          Instruction::RTI => match self.step {
             0 => {}
             1 => {}
             2 => {
@@ -627,7 +816,7 @@ impl Cpu {
             _ => panic!(),
           },
           //比較
-          Instruction::Cmp | Instruction::Cpx | Instruction::Cpy => {
+          Instruction::CMP | Instruction::CPX | Instruction::CPY => {
             let operand = if self.is_immediate {
               self.immediate_operand
             } else {
@@ -636,19 +825,23 @@ impl Cpu {
             };
 
             let (result, overflow) = match INSTRUCTION_SET[self.op as usize].instruction {
-              Instruction::Cmp => self.a,
-              Instruction::Cpx => self.x,
-              Instruction::Cpy => self.y,
+              Instruction::CMP => self.a,
+              Instruction::CPX => self.x,
+              Instruction::CPY => self.y,
               _ => panic!(),
             }
             .overflowing_sub(operand);
 
             self.p.n = (result & 0x80) == 0x80;
             self.p.z = result == 0;
-            self.p.c = overflow;
+            self.p.c = !overflow;
+
+            self.state = CpuState::ReadOpcode;
+            self.step = 0;
+            return;
           }
           //インクリメント、デクリメント
-          Instruction::Inc | Instruction::Dec => match self.step {
+          Instruction::INC | Instruction::DEC => match self.step {
             0 => {}
             1 => {
               let operand = if self.is_immediate {
@@ -659,8 +852,8 @@ impl Cpu {
               };
 
               let operand = match INSTRUCTION_SET[self.op as usize].instruction {
-                Instruction::Inc => operand.wrapping_add(1),
-                Instruction::Dec => operand.wrapping_sub(1),
+                Instruction::INC => operand.wrapping_add(1),
+                Instruction::DEC => operand.wrapping_sub(1),
                 _ => panic!(),
               };
               self.p.n = (operand & 0x80) == 0x80;
@@ -676,10 +869,10 @@ impl Cpu {
             }
             _ => panic!(),
           },
-          Instruction::Inx | Instruction::Dex => {
+          Instruction::INX | Instruction::DEX => {
             self.x = match INSTRUCTION_SET[self.op as usize].instruction {
-              Instruction::Inx => self.x.wrapping_add(1),
-              Instruction::Dex => self.x.wrapping_sub(1),
+              Instruction::INX => self.x.wrapping_add(1),
+              Instruction::DEX => self.x.wrapping_sub(1),
               _ => panic!(),
             };
 
@@ -690,10 +883,10 @@ impl Cpu {
             self.step = 0;
             return;
           }
-          Instruction::Iny | Instruction::Dey => {
+          Instruction::INY | Instruction::DEY => {
             self.y = match INSTRUCTION_SET[self.op as usize].instruction {
-              Instruction::Iny => self.y.wrapping_add(1),
-              Instruction::Dey => self.y.wrapping_sub(1),
+              Instruction::INY => self.y.wrapping_add(1),
+              Instruction::DEY => self.y.wrapping_sub(1),
               _ => panic!(),
             };
 
@@ -705,50 +898,50 @@ impl Cpu {
             return;
           }
           //フラグ操作
-          Instruction::Clc => {
+          Instruction::CLC => {
             self.p.c = false;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Sec => {
+          Instruction::SEC => {
             self.p.c = true;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Cli => {
+          Instruction::CLI => {
             self.p.i = false;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Sei => {
+          Instruction::SEI => {
             self.p.i = true;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Cld => {
+          Instruction::CLD => {
             self.p.d = false;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Sed => {
+          Instruction::SED => {
             self.p.d = true;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
-          Instruction::Clv => {
+          Instruction::CLV => {
             self.p.v = false;
             self.state = CpuState::ReadOpcode;
             self.step = 0;
             return;
           }
           //ロード
-          Instruction::Lda => {
+          Instruction::LDA => {
             let operand = if self.is_immediate {
               self.immediate_operand
             } else {
@@ -770,7 +963,7 @@ impl Cpu {
             self.step = 0;
             return;
           }
-          Instruction::Ldx => {
+          Instruction::LDX => {
             let operand = if self.is_immediate {
               self.immediate_operand
             } else {
@@ -787,7 +980,7 @@ impl Cpu {
             self.step = 0;
             return;
           }
-          Instruction::Ldy => {
+          Instruction::LDY => {
             let operand = if self.is_immediate {
               self.immediate_operand
             } else {
@@ -805,15 +998,15 @@ impl Cpu {
             return;
           }
           //ストア
-          Instruction::Sta | Instruction::Stx | Instruction::Sty => {
+          Instruction::STA | Instruction::STX | Instruction::STY => {
             let addr = get_addr(self.addr_h, self.addr_l);
             self.bus.write(
               ppu,
               addr,
               match INSTRUCTION_SET[self.op as usize].instruction {
-                Instruction::Sta => self.a,
-                Instruction::Stx => self.x,
-                Instruction::Sty => self.y,
+                Instruction::STA => self.a,
+                Instruction::STX => self.x,
+                Instruction::STY => self.y,
                 _ => panic!(),
               },
             );
@@ -823,10 +1016,10 @@ impl Cpu {
             return;
           }
           //レジスタ間転送
-          Instruction::Tax | Instruction::Tsx => {
+          Instruction::TAX | Instruction::TSX => {
             self.x = match INSTRUCTION_SET[self.op as usize].instruction {
-              Instruction::Tax => self.a,
-              Instruction::Tsx => self.sp,
+              Instruction::TAX => self.a,
+              Instruction::TSX => self.sp,
               _ => panic!(),
             };
             self.p.n = (self.x & 0x80) == 0x80;
@@ -836,10 +1029,10 @@ impl Cpu {
             self.step = 0;
             return;
           }
-          Instruction::Txa | Instruction::Tya => {
+          Instruction::TXA | Instruction::TYA => {
             self.a = match INSTRUCTION_SET[self.op as usize].instruction {
-              Instruction::Txa => self.x,
-              Instruction::Tya => self.y,
+              Instruction::TXA => self.x,
+              Instruction::TYA => self.y,
               _ => panic!(),
             };
             self.p.n = (self.a & 0x80) == 0x80;
@@ -849,7 +1042,7 @@ impl Cpu {
             self.step = 0;
             return;
           }
-          Instruction::Tay => {
+          Instruction::TAY => {
             self.y = self.a;
             self.p.n = (self.y & 0x80) == 0x80;
             self.p.z = self.y == 0;
@@ -858,7 +1051,7 @@ impl Cpu {
             self.step = 0;
             return;
           }
-          Instruction::Txs => {
+          Instruction::TXS => {
             self.sp = self.x;
 
             self.state = CpuState::ReadOpcode;
@@ -866,12 +1059,12 @@ impl Cpu {
             return;
           }
           //スタック
-          Instruction::Pha | Instruction::Php => match self.step {
+          Instruction::PHA | Instruction::PHP => match self.step {
             0 => {}
             1 => {
               self.push(match INSTRUCTION_SET[self.op as usize].instruction {
-                Instruction::Pha => self.a,
-                Instruction::Php => self.p.read(),
+                Instruction::PHA => self.a,
+                Instruction::PHP => self.p.read() | 0b00110000,
                 _ => panic!(),
               });
 
@@ -880,7 +1073,7 @@ impl Cpu {
             }
             _ => panic!(),
           },
-          Instruction::Pla => match self.step {
+          Instruction::PLA => match self.step {
             0 => {}
             1 => {}
             2 => {
@@ -893,11 +1086,11 @@ impl Cpu {
             }
             _ => panic!(),
           },
-          Instruction::Plp => match self.step {
+          Instruction::PLP => match self.step {
             0 => {}
             1 => {}
             2 => {
-              let result = self.pop();
+              let result = self.pop() & 0b1110_1111; //割り込みじゃないのでBフラグを落とす
               self.p.write(result);
 
               self.state = CpuState::ReadOpcode;
@@ -905,7 +1098,7 @@ impl Cpu {
             }
             _ => panic!(),
           },
-          Instruction::Nop => {
+          Instruction::NOP => {
             self.state = CpuState::ReadOpcode;
             self.step = 0;
           }
@@ -939,67 +1132,68 @@ enum AddressingMode {
   Indirect,
   IndirectX,
   IndirectY,
-  AddressingModeLength,
 }
+#[derive(Debug)]
 enum Instruction {
-  Adc,
-  Sbc,
-  And,
-  Ora,
-  Eor,
-  Asl,
-  Lsr,
-  Rol,
-  Ror,
-  Bcc,
-  Bcs,
-  Beq,
-  Bne,
-  Bvc,
-  Bvs,
-  Bpl,
-  Bmi,
-  Bit,
-  Jmp,
-  Jsr,
-  Rts,
-  Brk,
-  Rti,
-  Cmp,
-  Cpx,
-  Cpy,
-  Inc,
-  Dec,
-  Inx,
-  Dex,
-  Iny,
-  Dey,
-  Clc,
-  Sec,
-  Cli,
-  Sei,
-  Cld,
-  Sed,
-  Clv,
-  Lda,
-  Ldx,
-  Ldy,
-  Sta,
-  Stx,
-  Sty,
-  Tax,
-  Txa,
-  Tay,
-  Tya,
-  Tsx,
-  Txs,
-  Pha,
-  Pla,
-  Php,
-  Plp,
-  Nop,
+  ADC,
+  SBC,
+  AND,
+  ORA,
+  EOR,
+  ASL,
+  LSR,
+  ROL,
+  ROR,
+  BCC,
+  BCS,
+  BEQ,
+  BNE,
+  BVC,
+  BVS,
+  BPL,
+  BMI,
+  BIT,
+  JMP,
+  JSR,
+  RTS,
+  BRK,
+  RTI,
+  CMP,
+  CPX,
+  CPY,
+  INC,
+  DEC,
+  INX,
+  DEX,
+  INY,
+  DEY,
+  CLC,
+  SEC,
+  CLI,
+  SEI,
+  CLD,
+  SED,
+  CLV,
+  LDA,
+  LDX,
+  LDY,
+  STA,
+  STX,
+  STY,
+  TAX,
+  TXA,
+  TAY,
+  TYA,
+  TSX,
+  TXS,
+  PHA,
+  PLA,
+  PHP,
+  PLP,
+  NOP,
   Undefined,
 }
+
 struct InstructionDefinition {
   mode: AddressingMode,
   instruction: Instruction,
@@ -1010,260 +1204,260 @@ const UNDEFINED_INSTRUCTION: InstructionDefinition =
   InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Undefined, clock: 1 };
 
 const INSTRUCTION_SET: [InstructionDefinition; 0x100] = [
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Brk, clock: 7 },
-  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::Ora, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::BRK, clock: 7 },
+  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::ORA, clock: 6 },
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Ora, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Asl, clock: 5 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::ORA, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::ASL, clock: 5 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Php, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::Ora, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::Accumulator, instruction: Instruction::Asl, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::PHP, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::ORA, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Accumulator, instruction: Instruction::ASL, clock: 2 },
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Ora, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Asl, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::ORA, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::ASL, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::Bpl, clock: 2 }, //+1or2
-  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::Ora, clock: 5 }, //+1
+  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::BPL, clock: 2 }, //+1or2
+  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::ORA, clock: 5 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Ora, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Asl, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::ORA, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::ASL, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Clc, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::Ora, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::CLC, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::ORA, clock: 4 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Ora, clock: 4 }, //+1
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Asl, clock: 6 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::ORA, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::ASL, clock: 6 }, //+1
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Jsr, clock: 6 },
-  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::And, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::JSR, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::AND, clock: 6 },
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Bit, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::And, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Rol, clock: 5 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::BIT, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::AND, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::ROL, clock: 5 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Plp, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::And, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::Accumulator, instruction: Instruction::Rol, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::PLP, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::AND, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Accumulator, instruction: Instruction::ROL, clock: 2 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Bit, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::And, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Rol, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::BIT, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::AND, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::ROL, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::Bmi, clock: 2 }, //+1or2
-  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::And, clock: 5 }, //+1
+  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::BMI, clock: 2 }, //+1or2
+  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::AND, clock: 5 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::And, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Rol, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::AND, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::ROL, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Sec, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::And, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::SEC, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::AND, clock: 4 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::And, clock: 4 }, //+1
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Rol, clock: 6 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::AND, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::ROL, clock: 6 }, //+1
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Rti, clock: 6 },
-  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::Eor, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::RTI, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::EOR, clock: 6 },
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Eor, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Lsr, clock: 5 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::EOR, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::LSR, clock: 5 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Pha, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::Eor, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::Accumulator, instruction: Instruction::Lsr, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::PHA, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::EOR, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Accumulator, instruction: Instruction::LSR, clock: 2 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Jmp, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Eor, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Lsr, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::JMP, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::EOR, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::LSR, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::Bvc, clock: 2 }, //+1or2
-  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::Eor, clock: 5 }, //+1
+  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::BVC, clock: 2 }, //+1or2
+  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::EOR, clock: 5 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Eor, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Lsr, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::EOR, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::LSR, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Cli, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::Eor, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::CLI, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::EOR, clock: 4 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Eor, clock: 4 }, //+1
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Lsr, clock: 6 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::EOR, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::LSR, clock: 6 }, //+1
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Rts, clock: 6 },
-  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::Adc, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::RTS, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::ADC, clock: 6 },
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Adc, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Ror, clock: 5 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::ADC, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::ROR, clock: 5 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Pla, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::Adc, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::Accumulator, instruction: Instruction::Ror, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::PLA, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::ADC, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Accumulator, instruction: Instruction::ROR, clock: 2 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Indirect, instruction: Instruction::Jmp, clock: 5 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Adc, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Ror, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Indirect, instruction: Instruction::JMP, clock: 5 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::ADC, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::ROR, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::Bvs, clock: 2 }, //+1or2
-  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::Adc, clock: 5 }, //+1
+  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::BVS, clock: 2 }, //+1or2
+  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::ADC, clock: 5 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Adc, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Ror, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::ADC, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::ROR, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Sei, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::Adc, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::SEI, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::ADC, clock: 4 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Adc, clock: 4 }, //+1
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Ror, clock: 6 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::ADC, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::ROR, clock: 6 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::Sta, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::STA, clock: 6 },
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Sty, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Sta, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Stx, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::STY, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::STA, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::STX, clock: 3 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Dey, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::DEY, clock: 2 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Txa, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::TXA, clock: 2 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Sty, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Sta, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Stx, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::STY, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::STA, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::STX, clock: 4 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::Bcc, clock: 2 }, //+1or2
-  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::Sta, clock: 5 }, //+1
+  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::BCC, clock: 2 }, //+1or2
+  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::STA, clock: 5 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Sty, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Sta, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::ZeroPageY, instruction: Instruction::Stx, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::STY, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::STA, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageY, instruction: Instruction::STX, clock: 4 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Tya, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::Sta, clock: 4 }, //+1
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Txs, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::TYA, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::STA, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::TXS, clock: 2 },
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Sta, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::STA, clock: 4 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::Ldy, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::Lda, clock: 6 },
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::Ldx, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::LDY, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::LDA, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::LDX, clock: 2 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Ldy, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Lda, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Ldx, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::LDY, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::LDA, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::LDX, clock: 3 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Tay, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::Lda, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Tax, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::TAY, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::LDA, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::TAX, clock: 2 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Ldy, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Lda, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Ldx, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::LDY, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::LDA, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::LDX, clock: 4 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::Bcs, clock: 2 }, //+1or2
-  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::Lda, clock: 5 }, //+1
+  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::BCS, clock: 2 }, //+1or2
+  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::LDA, clock: 5 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Ldy, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Lda, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::ZeroPageY, instruction: Instruction::Ldx, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::LDY, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::LDA, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageY, instruction: Instruction::LDX, clock: 4 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Clv, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::Lda, clock: 4 }, //+1
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Tsx, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::CLV, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::LDA, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::TSX, clock: 2 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Ldy, clock: 4 }, //+1
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Lda, clock: 4 }, //+1
-  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::Ldx, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::LDY, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::LDA, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::LDX, clock: 4 }, //+1
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::Cpy, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::Cmp, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::CPY, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::CMP, clock: 6 },
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Cpy, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Cmp, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Dec, clock: 5 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::CPY, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::CMP, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::DEC, clock: 5 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Iny, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::Cmp, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Dex, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::INY, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::CMP, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::DEX, clock: 2 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Cpy, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Cmp, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Dec, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::CPY, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::CMP, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::DEC, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::Bne, clock: 2 }, //+1or2
-  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::Cmp, clock: 5 }, //+1
+  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::BNE, clock: 2 }, //+1or2
+  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::CMP, clock: 5 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Cmp, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Dec, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::CMP, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::DEC, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Cld, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::Cmp, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::CLD, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::CMP, clock: 4 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Cmp, clock: 4 }, //+1
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Dec, clock: 6 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::CMP, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::DEC, clock: 6 }, //+1
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::Cpx, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::Sbc, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::CPX, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::IndirectX, instruction: Instruction::SBC, clock: 6 },
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Cpx, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Sbc, clock: 3 },
-  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::Inc, clock: 5 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::CPX, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::SBC, clock: 3 },
+  InstructionDefinition { mode: AddressingMode::ZeroPage, instruction: Instruction::INC, clock: 5 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Inx, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::Sbc, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Nop, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::INX, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Immediate, instruction: Instruction::SBC, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::NOP, clock: 2 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Cpx, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Sbc, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::Inc, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::CPX, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::SBC, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::Absolute, instruction: Instruction::INC, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::Beq, clock: 2 }, //+1or2
-  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::Sbc, clock: 5 }, //+1
+  InstructionDefinition { mode: AddressingMode::Relative, instruction: Instruction::BEQ, clock: 2 }, //+1or2
+  InstructionDefinition { mode: AddressingMode::IndirectY, instruction: Instruction::SBC, clock: 5 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Sbc, clock: 4 },
-  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::Inc, clock: 6 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::SBC, clock: 4 },
+  InstructionDefinition { mode: AddressingMode::ZeroPageX, instruction: Instruction::INC, clock: 6 },
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::Sed, clock: 2 },
-  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::Sbc, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::Implied, instruction: Instruction::SED, clock: 2 },
+  InstructionDefinition { mode: AddressingMode::AbsoluteY, instruction: Instruction::SBC, clock: 4 }, //+1
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
   UNDEFINED_INSTRUCTION,
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Sbc, clock: 4 }, //+1
-  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::Inc, clock: 6 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::SBC, clock: 4 }, //+1
+  InstructionDefinition { mode: AddressingMode::AbsoluteX, instruction: Instruction::INC, clock: 6 }, //+1
   UNDEFINED_INSTRUCTION,
 ];

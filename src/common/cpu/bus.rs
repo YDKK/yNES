@@ -68,7 +68,7 @@ impl Bus {
       }
       0x4000..=0x401F => {
         //APU, PAD
-        todo!()
+        //todo!()
       }
       0x4020..=0x5FFF => {
         //拡張ROM

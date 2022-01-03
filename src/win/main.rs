@@ -148,8 +148,8 @@ impl Window {
 
         if self.nes.is_some() {
             let nes = self.nes.as_mut().unwrap();
-            //while nes.clock() != true {}
-            nes.clock();
+            while nes.clock() != true {}
+            //nes.clock();
             let screen = nes.get_screen();
             for (index, pixel) in screen.iter().enumerate() {
                 let index = index * 4;
