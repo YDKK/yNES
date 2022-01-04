@@ -9,6 +9,17 @@ pub struct Nes {
   clock_count: u8,
 }
 
+struct Pad {
+  a: bool,
+  b: bool,
+  select: bool,
+  start: bool,
+  up: bool,
+  down: bool,
+  left: bool,
+  right: bool,
+}
+
 impl Nes {
   pub fn new(rom_path: String) -> Result<Self, String> {
     let nes = Nes { cpu: Cpu::new(), ppu: Ppu::new(), rom: Rom::open(rom_path)?, clock_count: 0 };

@@ -41,7 +41,7 @@ impl VRam {
   fn write(&mut self, addr: u16, value: u8) {
     let addr = addr as usize;
     match addr {
-      0x2000..=0x23BF => self.name_table_0[addr & 0x3BF] = value,
+      0x2000..=0x23BF => self.name_table_0[addr - 0x2000] = value,
       0x23C0..=0x23FF => self.attribute_table_0[addr - 0x23C0] = value,
       0x2400..=0x27BF => self.name_table_1[addr - 0x2400] = value,
       0x27C0..=0x27FF => self.attribute_table_1[addr - 0x27C0] = value,
