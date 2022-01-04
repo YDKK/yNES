@@ -1,3 +1,4 @@
+use super::nes::PadInputs;
 use super::ppu::*;
 use super::rom::*;
 use super::util::*;
@@ -114,17 +115,18 @@ impl Cpu {
   pub fn irq(&mut self) {
     self.irq = true;
   }
-  pub fn clock(&mut self, rom: &Rom, ppu: &mut Ppu) {
+  pub fn clock(&mut self, rom: &Rom, ppu: &mut Ppu, pad: &PadInputs) {
     let rom = Some(rom);
     let ppu = &mut Some(ppu);
+    let pad = Some(pad);
 
     match self.state {
       CpuState::Reset => {
         self.p.b = false;
         self.p.i = true;
         //let addr_l = 0x00; //FOR TESTING
-        let addr_l = self.bus.read(rom, ppu, 0xFFFC);
-        let addr_h = self.bus.read(rom, ppu, 0xFFFD);
+        let addr_l = self.bus.read(rom, ppu, pad, 0xFFFC);
+        let addr_h = self.bus.read(rom, ppu, pad, 0xFFFD);
         self.pc = get_addr(addr_h, addr_l);
         self.state = CpuState::ReadOpcode;
         self.step = 0;
@@ -136,8 +138,8 @@ impl Cpu {
         self.push(self.pc as u8);
         self.push(self.p.read());
         self.p.i = true;
-        let addr_l = self.bus.read(rom, ppu, 0xFFFA);
-        let addr_h = self.bus.read(rom, ppu, 0xFFFB);
+        let addr_l = self.bus.read(rom, ppu, pad, 0xFFFA);
+        let addr_h = self.bus.read(rom, ppu, pad, 0xFFFB);
         self.pc = get_addr(addr_h, addr_l);
         self.state = CpuState::ReadOpcode;
         self.step = 0;
@@ -150,8 +152,8 @@ impl Cpu {
         self.push(self.pc as u8);
         self.push(self.p.read());
         self.p.i = true;
-        let addr_l = self.bus.read(rom, ppu, 0xFFFE);
-        let addr_h = self.bus.read(rom, ppu, 0xFFFF);
+        let addr_l = self.bus.read(rom, ppu, pad, 0xFFFE);
+        let addr_h = self.bus.read(rom, ppu, pad, 0xFFFF);
         self.pc = get_addr(addr_h, addr_l);
         self.state = CpuState::ReadOpcode;
         self.step = 0;
@@ -182,7 +184,7 @@ impl Cpu {
         self.is_immediate = false;
         self.is_accumulator = false;
         self.adressing_overflow = false;
-        self.op = self.bus.read(rom, ppu, self.pc);
+        self.op = self.bus.read(rom, ppu, pad, self.pc);
         let addressing_mode = &INSTRUCTION_SET[self.op as usize].mode;
 
         //ブレークポイント
@@ -195,8 +197,8 @@ impl Cpu {
         let output_log = false;
         if output_log {
           let instruction = &INSTRUCTION_SET[self.op as usize].instruction;
-          let operand_1 = self.bus.read(rom, ppu, self.pc + 1);
-          let operand_2 = self.bus.read(rom, ppu, self.pc + 2);
+          let operand_1 = self.bus.read(rom, ppu, pad, self.pc + 1);
+          let operand_2 = self.bus.read(rom, ppu, pad, self.pc + 2);
           match addressing_mode {
             AddressingMode::Accumulator | AddressingMode::Implied => {
               println!(
@@ -279,7 +281,7 @@ impl Cpu {
           AddressingMode::Implied | AddressingMode::Relative => CpuState::ExecuteInstruction,
           AddressingMode::Immediate => {
             self.pc += 1;
-            self.immediate_operand = self.bus.read(rom, ppu, self.pc);
+            self.immediate_operand = self.bus.read(rom, ppu, pad, self.pc);
             self.is_immediate = true;
             CpuState::ExecuteInstruction
           }
@@ -294,11 +296,11 @@ impl Cpu {
         match INSTRUCTION_SET[self.op as usize].mode {
           AddressingMode::Absolute => match self.step {
             0 => {
-              self.addr_l = self.bus.read(rom, ppu, self.pc);
+              self.addr_l = self.bus.read(rom, ppu, pad, self.pc);
               self.pc += 1;
             }
             1 => {
-              self.addr_h = self.bus.read(rom, ppu, self.pc);
+              self.addr_h = self.bus.read(rom, ppu, pad, self.pc);
               self.state = CpuState::ExecuteInstruction;
               self.step = 0;
               self.pc += 1;
@@ -311,7 +313,7 @@ impl Cpu {
               let (result, overflow) =
                 self
                   .bus
-                  .read(rom, ppu, self.pc)
+                  .read(rom, ppu, pad, self.pc)
                   .overflowing_add(match INSTRUCTION_SET[self.op as usize].mode {
                     AddressingMode::AbsoluteX => self.x,
                     AddressingMode::AbsoluteY => self.y,
@@ -322,7 +324,7 @@ impl Cpu {
               self.pc += 1;
             }
             1 => {
-              self.addr_h = self.bus.read(rom, ppu, self.pc);
+              self.addr_h = self.bus.read(rom, ppu, pad, self.pc);
               if self.adressing_overflow == false {
                 self.state = CpuState::ExecuteInstruction;
                 self.step = 0;
@@ -341,7 +343,7 @@ impl Cpu {
           },
           AddressingMode::ZeroPage => {
             self.addr_h = 0x00;
-            self.addr_l = self.bus.read(rom, ppu, self.pc);
+            self.addr_l = self.bus.read(rom, ppu, pad, self.pc);
             self.state = CpuState::ExecuteInstruction;
             self.step = 0;
             self.pc += 1;
@@ -353,7 +355,7 @@ impl Cpu {
               self.addr_l =
                 self
                   .bus
-                  .read(rom, ppu, self.pc)
+                  .read(rom, ppu, pad, self.pc)
                   .wrapping_add(match INSTRUCTION_SET[self.op as usize].mode {
                     AddressingMode::ZeroPageX => self.x,
                     AddressingMode::ZeroPageY => self.y,
@@ -370,17 +372,17 @@ impl Cpu {
           },
           AddressingMode::Indirect => match self.step {
             0 => {
-              self.addr_l = self.bus.read(rom, ppu, self.pc);
+              self.addr_l = self.bus.read(rom, ppu, pad, self.pc);
               self.pc += 1;
             }
             1 => {
-              self.addr_h = self.bus.read(rom, ppu, self.pc);
+              self.addr_h = self.bus.read(rom, ppu, pad, self.pc);
             }
             2 => {
               let addr = get_addr(self.addr_h, self.addr_l);
               let addr2 = get_addr(self.addr_h, self.addr_l.wrapping_add(1));
-              self.addr_l = self.bus.read(rom, ppu, addr);
-              self.addr_h = self.bus.read(rom, ppu, addr2);
+              self.addr_l = self.bus.read(rom, ppu, pad, addr);
+              self.addr_h = self.bus.read(rom, ppu, pad, addr2);
               self.state = CpuState::ExecuteInstruction;
               self.step = 0;
               self.pc += 1;
@@ -390,7 +392,7 @@ impl Cpu {
           },
           AddressingMode::IndirectX => match self.step {
             0 => {
-              self.addr_l = self.bus.read(rom, ppu, self.pc).wrapping_add(self.x);
+              self.addr_l = self.bus.read(rom, ppu, pad, self.pc).wrapping_add(self.x);
             }
             1 => {
               self.addr_h = 0x00;
@@ -398,8 +400,8 @@ impl Cpu {
             2 => {
               let addr = get_addr(self.addr_h, self.addr_l);
               let addr2 = get_addr(self.addr_h, self.addr_l.wrapping_add(1));
-              self.addr_l = self.bus.read(rom, ppu, addr);
-              self.addr_h = self.bus.read(rom, ppu, addr2); //3サイクル目でやるのが正解っぽい気がする
+              self.addr_l = self.bus.read(rom, ppu, pad, addr);
+              self.addr_h = self.bus.read(rom, ppu, pad, addr2); //3サイクル目でやるのが正解っぽい気がする
             }
             3 => {
               self.state = CpuState::ExecuteInstruction;
@@ -411,13 +413,13 @@ impl Cpu {
           },
           AddressingMode::IndirectY => match self.step {
             0 => {
-              self.addr_l = self.bus.read(rom, ppu, self.pc);
+              self.addr_l = self.bus.read(rom, ppu, pad, self.pc);
             }
             1 => {
               let addr = get_addr(0x00, self.addr_l);
               let addr2 = get_addr(0x00, self.addr_l.wrapping_add(1));
-              self.addr_l = self.bus.read(rom, ppu, addr);
-              self.addr_h = self.bus.read(rom, ppu, addr2);
+              self.addr_l = self.bus.read(rom, ppu, pad, addr);
+              self.addr_h = self.bus.read(rom, ppu, pad, addr2);
             }
             2 => {
               let (result, overflow) = self.addr_l.overflowing_add(self.y);
@@ -449,7 +451,7 @@ impl Cpu {
               self.immediate_operand
             } else {
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             let (result, overflow) = self.a.overflowing_add(operand);
@@ -471,7 +473,7 @@ impl Cpu {
               self.immediate_operand
             } else {
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             let (result, overflow) = self.a.overflowing_sub(operand);
@@ -494,7 +496,7 @@ impl Cpu {
               self.immediate_operand
             } else {
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             self.a &= operand;
@@ -511,7 +513,7 @@ impl Cpu {
               self.immediate_operand
             } else {
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             self.a |= operand;
@@ -528,7 +530,7 @@ impl Cpu {
               self.immediate_operand
             } else {
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             self.a ^= operand;
@@ -547,7 +549,7 @@ impl Cpu {
             let mut operand = if self.is_accumulator {
               self.a
             } else {
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             self.p.c = (operand & 0x80) == 0x80;
@@ -573,7 +575,7 @@ impl Cpu {
             let mut operand = if self.is_accumulator {
               self.a
             } else {
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             self.p.c = (operand & 0x01) == 0x01;
@@ -598,7 +600,7 @@ impl Cpu {
             let mut operand = if self.is_accumulator {
               self.a
             } else {
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             let carry = self.p.c;
@@ -626,7 +628,7 @@ impl Cpu {
             let mut operand = if self.is_accumulator {
               self.a
             } else {
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             let carry = self.p.c;
@@ -671,7 +673,7 @@ impl Cpu {
             if jump {
               match self.step {
                 0 => {
-                  let offset = self.bus.read(rom, ppu, self.pc) as i8 as i16;
+                  let offset = self.bus.read(rom, ppu, pad, self.pc) as i8 as i16;
                   let last_pc = self.pc;
                   self.pc += 1;
                   let page_cross = (last_pc & 0xFF00) != (self.pc & 0xFF00);
@@ -704,7 +706,7 @@ impl Cpu {
               self.immediate_operand
             } else {
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             let result = self.a & operand;
@@ -782,11 +784,11 @@ impl Cpu {
             4 => {
               self.p.i = true;
               self.pc &= 0x00FF;
-              self.pc |= (self.bus.read(rom, ppu, 0xFFFE) as u16) << 8;
+              self.pc |= (self.bus.read(rom, ppu, pad, 0xFFFE) as u16) << 8;
             }
             5 => {
               self.pc &= 0xFF00;
-              self.pc |= self.bus.read(rom, ppu, 0xFFFF) as u16;
+              self.pc |= self.bus.read(rom, ppu, pad, 0xFFFF) as u16;
 
               self.state = CpuState::ReadOpcode;
               self.step = 0;
@@ -821,7 +823,7 @@ impl Cpu {
               self.immediate_operand
             } else {
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             let (result, overflow) = match INSTRUCTION_SET[self.op as usize].instruction {
@@ -848,7 +850,7 @@ impl Cpu {
                 self.immediate_operand
               } else {
                 let addr = get_addr(self.addr_h, self.addr_l);
-                self.bus.read(rom, ppu, addr)
+                self.bus.read(rom, ppu, pad, addr)
               };
 
               let operand = match INSTRUCTION_SET[self.op as usize].instruction {
@@ -946,7 +948,7 @@ impl Cpu {
               self.immediate_operand
             } else {
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             self.a = operand;
@@ -968,7 +970,7 @@ impl Cpu {
               self.immediate_operand
             } else {
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             self.x = operand;
@@ -985,7 +987,7 @@ impl Cpu {
               self.immediate_operand
             } else {
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.read(rom, ppu, addr)
+              self.bus.read(rom, ppu, pad, addr)
             };
 
             self.y = operand;
@@ -1114,7 +1116,7 @@ impl Cpu {
   }
   fn pop(&mut self) -> u8 {
     self.sp += 1;
-    self.bus.read(None, &mut None, 0x0100 | self.sp as u16)
+    self.bus.read(None, &mut None, None, 0x0100 | self.sp as u16)
   }
 }
 

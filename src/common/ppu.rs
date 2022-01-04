@@ -268,7 +268,8 @@ impl Ppu {
     ((pattern_l >> (7 - pixel_in_tile_x)) & 0b01) | (((pattern_h >> (7 - pixel_in_tile_x)) << 1) & 0b10)
   }
 
-  pub fn clock(&mut self, rom: &Rom) -> bool {
+  pub fn clock(&mut self, rom: &Rom) -> (bool, bool) {
+    let mut nmi = false;
     match self.current_y {
       0..=239 => match self.current_x {
         0..=255 => {
@@ -365,6 +366,7 @@ impl Ppu {
         //Vblank
         if self.current_x == 0 {
           self.registers.status_register.v_blank = true;
+          nmi = self.registers.control_register.nmi_on_v_blank;
         }
       }
       242..=260 => {} //Vblank
@@ -377,7 +379,7 @@ impl Ppu {
       self.current_y += 1;
       self.current_y %= 262;
     }
-    self.current_x == 0 && self.current_y == 0
+    (self.current_x == 0 && self.current_y == 0, nmi)
   }
   pub fn get_screen(&self) -> &[u8; 256 * 240] {
     &self.frame

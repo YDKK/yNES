@@ -4,11 +4,13 @@
 // The copyright of the original code snippets belongs to Microsoft Corporation.
 
 use windows::{
-    core::*, Foundation::Numerics::*, Win32::Foundation::*, Win32::Graphics::Direct2D::Common::*,
-    Win32::Graphics::Direct2D::*, Win32::Graphics::Direct3D::*, Win32::Graphics::Direct3D11::*,
-    Win32::Graphics::Dxgi::Common::*, Win32::Graphics::Dxgi::*, Win32::Graphics::Gdi::*, Win32::Graphics::Imaging::*,
-    Win32::System::Com::*, Win32::System::LibraryLoader::*, Win32::System::Performance::*,
-    Win32::System::SystemInformation::GetLocalTime, Win32::UI::Controls::Dialogs::*, Win32::UI::WindowsAndMessaging::*,
+    core::*,
+    Win32::{
+        Foundation::*,
+        Graphics::{Direct2D::Common::*, Direct2D::*, Direct3D::*, Direct3D11::*, Dxgi::Common::*, Dxgi::*, Gdi::*},
+        System::{Com::*, LibraryLoader::*, Performance::*},
+        UI::{Controls::Dialogs::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
+    },
 };
 use y_nes::nes::*;
 
@@ -148,8 +150,24 @@ impl Window {
 
         if self.nes.is_some() {
             let nes = self.nes.as_mut().unwrap();
-            while nes.clock() != true {}
-            //nes.clock();
+            let mut input = PadInput { ..Default::default() };
+            unsafe {
+                input = PadInput {
+                    a: GetKeyState('A' as i32) < 0,
+                    b: GetKeyState('B' as i32) < 0,
+                    select: GetKeyState(VK_ESCAPE.into()) < 0,
+                    start: GetKeyState(VK_RETURN.into()) < 0,
+                    up: GetKeyState(VK_UP.into()) < 0,
+                    down: GetKeyState(VK_DOWN.into()) < 0,
+                    left: GetKeyState(VK_LEFT.into()) < 0,
+                    right: GetKeyState(VK_RIGHT.into()) < 0,
+                };
+            }
+            let inputs = PadInputs { pad1: input, pad2: Default::default() };
+            while nes.clock(&inputs) != true {}
+            // for _ in 0..100 {
+            //     nes.clock(&inputs);
+            // }
             let screen = nes.get_screen();
             for (index, pixel) in screen.iter().enumerate() {
                 let index = index * 4;

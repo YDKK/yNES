@@ -9,15 +9,24 @@ pub struct Nes {
   clock_count: u8,
 }
 
-struct Pad {
-  a: bool,
-  b: bool,
-  select: bool,
-  start: bool,
-  up: bool,
-  down: bool,
-  left: bool,
-  right: bool,
+pub struct PadInputs {
+  pub pad1: PadInput,
+  pub pad2: PadInput,
+}
+pub struct PadInput {
+  pub a: bool,
+  pub b: bool,
+  pub select: bool,
+  pub start: bool,
+  pub up: bool,
+  pub down: bool,
+  pub left: bool,
+  pub right: bool,
+}
+impl std::default::Default for PadInput {
+  fn default() -> Self {
+    PadInput { a: false, b: false, select: false, start: false, up: false, down: false, left: false, right: false }
+  }
 }
 
 impl Nes {
@@ -26,14 +35,18 @@ impl Nes {
 
     Ok(nes)
   }
-  pub fn clock(&mut self) -> bool {
+  pub fn clock(&mut self, pad: &PadInputs) -> bool {
     if self.clock_count % 3 == 0 {
-      self.cpu.clock(&self.rom, &mut self.ppu);
+      self.cpu.clock(&self.rom, &mut self.ppu, pad);
     }
     self.clock_count += 1;
     self.clock_count %= 3;
 
-    self.ppu.clock(&self.rom)
+    let (end_frame, nmi) = self.ppu.clock(&self.rom);
+    if nmi {
+      self.cpu.nmi();
+    }
+    end_frame
   }
   pub fn get_screen(&self) -> &[u8; 256 * 240] {
     self.ppu.get_screen()
