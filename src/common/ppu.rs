@@ -202,6 +202,13 @@ pub struct Ppu {
   frame: [u8; 256 * 240],
 }
 
+struct Sprite {
+  pattern: u8,
+  background: bool,
+  pallet: u8,
+  index: u8,
+}
+
 impl Ppu {
   pub fn new() -> Self {
     let ppu = Ppu {
@@ -280,53 +287,77 @@ impl Ppu {
           let pixel_in_tile_y = self.current_y % 8;
 
           //スプライト
-          let mut sprite_index = 0;
-          let sprite = loop {
-            let addr = sprite_index * 4;
-            let sprite_y = self.bus.v_ram.sprite_memory[addr].saturating_add(1);
-            if (sprite_y / 8) == (tile_y as u8) {
-              let sprite_x = self.bus.v_ram.sprite_memory[addr + 3];
-              if (sprite_x / 8) == (tile_x as u8) {
-                let sprite_tile = self.bus.v_ram.sprite_memory[addr + 1];
-                let sprite_attr = self.bus.v_ram.sprite_memory[addr + 2];
-                //垂直反転
-                let pixel_in_tile_y = if sprite_attr & 0b1000_0000 == 0b1000_0000 {
-                  7 - pixel_in_tile_y
-                } else {
-                  pixel_in_tile_y
-                };
-                //水平反転
-                let pixel_in_tile_x = if sprite_attr & 0b0100_0000 == 0b0100_0000 {
-                  7 - pixel_in_tile_x
-                } else {
-                  pixel_in_tile_x
-                };
+          let mut sprite_index: u8 = 0;
+          let sprite = if self.registers.control_register2.show_sprite
+            && (self.current_x >= 8 || self.registers.control_register2.show_left_column_sprite)
+          {
+            loop {
+              let addr = (sprite_index as usize) * 4;
+              let sprite_y = self.bus.v_ram.sprite_memory[addr].saturating_add(1);
+              if (sprite_y / 8) == (tile_y as u8) {
+                let sprite_x = self.bus.v_ram.sprite_memory[addr + 3];
+                if (sprite_x / 8) == (tile_x as u8) {
+                  let sprite_tile = self.bus.v_ram.sprite_memory[addr + 1];
+                  let sprite_attr = self.bus.v_ram.sprite_memory[addr + 2];
+                  //垂直反転
+                  let pixel_in_tile_y = if sprite_attr & 0b1000_0000 == 0b1000_0000 {
+                    7 - pixel_in_tile_y
+                  } else {
+                    pixel_in_tile_y
+                  };
+                  //水平反転
+                  let pixel_in_tile_x = if sprite_attr & 0b0100_0000 == 0b0100_0000 {
+                    7 - pixel_in_tile_x
+                  } else {
+                    pixel_in_tile_x
+                  };
 
-                let pattern = self.get_pattern(rom, sprite_tile, pixel_in_tile_x, pixel_in_tile_y);
-                let background = sprite_attr & 0b0010_0000 == 0b0010_0000;
-                let pallet = sprite_attr & 0b11;
-                break Some((pattern, background, pallet));
+                  let pattern = self.get_pattern(rom, sprite_tile, pixel_in_tile_x, pixel_in_tile_y);
+                  if pattern != 0 {
+                    let background = sprite_attr & 0b0010_0000 == 0b0010_0000;
+                    let pallet = sprite_attr & 0b11;
+                    break Some(Sprite { pattern, background, pallet, index: sprite_index });
+                  }
+                }
+              }
+              sprite_index += 1;
+              if sprite_index == 64 {
+                break None;
               }
             }
-            sprite_index += 1;
-            if sprite_index == 64 {
-              break None;
-            }
+          } else {
+            None
           };
 
           //BG
-          let name_base_addr = match self.registers.control_register.main_screen {
-            0 => 0x2000,
-            1 => 0x2400,
-            2 => 0x2800,
-            3 => 0x2C00,
-            _ => panic!(),
+          let mut pattern = if self.registers.control_register2.show_bg
+            && (self.current_x >= 8 || self.registers.control_register2.show_left_column_bg)
+          {
+            let name_base_addr = match self.registers.control_register.main_screen {
+              0 => 0x2000,
+              1 => 0x2400,
+              2 => 0x2800,
+              3 => 0x2C00,
+              _ => panic!(),
+            };
+            let name_addr = name_base_addr + tile_y_addr + tile_x;
+            let name = self.bus.v_ram.read(rom, name_addr);
+            self.get_pattern(rom, name, pixel_in_tile_x, pixel_in_tile_y)
+          } else {
+            0
           };
-          let name_addr = name_base_addr + tile_y_addr + tile_x;
-          let name = self.bus.v_ram.read(rom, name_addr);
-          let mut pattern = self.get_pattern(rom, name, pixel_in_tile_x, pixel_in_tile_y);
 
-          let pallet = if sprite.is_none() || sprite.unwrap().1 || sprite.unwrap().0 == 0 {
+          if self.current_x != 255
+            && sprite.is_some()
+            && sprite.as_ref().unwrap().index == 0
+            && pattern != 0
+            && sprite.as_ref().unwrap().pattern != 0
+          {
+            //sprite 0 hit
+            self.registers.status_register.sprite_0_hit = true;
+          }
+
+          let pallet = if sprite.is_none() || sprite.as_ref().unwrap().background {
             //BGを描画する
             let attribute_block_x = tile_x / 4;
             let attribute_block_y = tile_y_addr / 4;
@@ -343,8 +374,8 @@ impl Ppu {
             (attribute >> (block * 2)) & 0b11
           } else {
             //スプライトを描画する
-            pattern = sprite.unwrap().0;
-            sprite.unwrap().2
+            pattern = sprite.as_ref().unwrap().pattern;
+            sprite.as_ref().unwrap().pallet
           };
 
           let pallet_addr = 0x3F00 + ((pallet as u16) << 2);
@@ -370,7 +401,11 @@ impl Ppu {
         }
       }
       242..=260 => {} //Vblank
-      261 => {}       //pre-render scanline
+      261 => {
+        if self.current_x == 0 {
+          self.registers.status_register.sprite_0_hit = false;
+        }
+      } //pre-render scanline
       _ => panic!(),
     }
     self.current_x += 1;

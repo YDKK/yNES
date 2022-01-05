@@ -12,7 +12,7 @@ menu MENU {
     }
   }
   POPUP "Speed(&S)" {
-    MENUITEM "Clock Base(&0)" , 300
+    MENUITEM "Slow(&0)" , 300
     MENUITEM "100%(&1)" , 301
   }
   POPUP "Help(&H)" {

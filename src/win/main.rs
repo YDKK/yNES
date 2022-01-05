@@ -89,6 +89,11 @@ fn main() -> Result<()> {
     window.run()
 }
 
+enum Speed {
+    Normal,
+    Slow,
+}
+
 struct Window {
     handle: HWND,
     factory: ID2D1Factory1,
@@ -103,6 +108,7 @@ struct Window {
     occlusion: u32,
     frequency: i64,
     nes: Option<Nes>,
+    speed: Speed,
 }
 
 impl Window {
@@ -131,6 +137,7 @@ impl Window {
             occlusion: 0,
             frequency,
             nes: None,
+            speed: Speed::Normal,
         })
     }
 
@@ -164,10 +171,14 @@ impl Window {
                 };
             }
             let inputs = PadInputs { pad1: input, pad2: Default::default() };
-            while nes.clock(&inputs) != true {}
-            // for _ in 0..100 {
-            //     nes.clock(&inputs);
-            // }
+            match self.speed {
+                Speed::Normal => while nes.clock(&inputs) != true {},
+                Speed::Slow => {
+                    for _ in 0..100 {
+                        nes.clock(&inputs);
+                    }
+                }
+            }
             let screen = nes.get_screen();
             for (index, pixel) in screen.iter().enumerate() {
                 let index = index * 4;
@@ -358,13 +369,21 @@ impl Window {
                         self.nes = Some(Nes::new(file_path.to_string()).unwrap());
                         0
                     }
-                    param @ 200..=204 => {
+                    param @ 200..=299 => {
                         match param {
                             200 => self.set_window_size(1),
                             201 => self.set_window_size(2),
                             202 => self.set_window_size(3),
                             203 => self.set_window_size(4),
                             204 => self.set_window_size(5),
+                            _ => panic!(),
+                        };
+                        0
+                    }
+                    param @ 300..=399 => {
+                        match param {
+                            300 => self.speed = Speed::Slow,
+                            301 => self.speed = Speed::Normal,
                             _ => panic!(),
                         };
                         0
