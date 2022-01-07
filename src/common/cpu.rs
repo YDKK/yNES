@@ -1112,10 +1112,10 @@ impl Cpu {
   }
   fn push(&mut self, value: u8) {
     self.bus.write(&mut None, 0x0100 | self.sp as u16, value);
-    self.sp -= 1;
+    self.sp = self.sp.wrapping_sub(1);
   }
   fn pop(&mut self) -> u8 {
-    self.sp += 1;
+    self.sp = self.sp.wrapping_add(1);
     self.bus.read(None, &mut None, None, 0x0100 | self.sp as u16)
   }
 }

@@ -280,11 +280,13 @@ impl Ppu {
     match self.current_y {
       0..=239 => match self.current_x {
         0..=255 => {
-          let tile_x = self.current_x / 8;
-          let tile_y = self.current_y / 8;
+          let scrolled_x = self.current_x + self.scroll_horizontal as u16;
+          let scrolled_y = self.current_y + self.scroll_vertical as u16;
+          let tile_x = scrolled_x / 8;
+          let tile_y = scrolled_y / 8;
           let tile_y_addr = tile_y * 0x20;
-          let pixel_in_tile_x = self.current_x % 8;
-          let pixel_in_tile_y = self.current_y % 8;
+          let pixel_in_tile_x = scrolled_x % 8;
+          let pixel_in_tile_y = scrolled_y % 8;
 
           //スプライト
           let mut sprite_index: u8 = 0;
@@ -370,7 +372,7 @@ impl Ppu {
             };
             let attribute_addr = attribute_base_addr + attribute_block_y + attribute_block_x;
             let attribute = self.bus.v_ram.read(rom, attribute_addr);
-            let block = ((self.current_x / 32) % 2) + (((self.current_y / 32) % 2) * 2);
+            let block = ((scrolled_x / 32) % 2) + (((scrolled_y / 32) % 2) * 2);
             (attribute >> (block * 2)) & 0b11
           } else {
             //スプライトを描画する
