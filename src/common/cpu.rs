@@ -188,13 +188,13 @@ impl Cpu {
         let addressing_mode = &INSTRUCTION_SET[self.op as usize].mode;
 
         //ブレークポイント
-        let brake_point: Option<u16> = None; //Some(0xD980);
-        if brake_point.is_some() && brake_point.unwrap() == self.pc {
-          println!("Hit brake_point"); //brake here
+        let break_point: Option<u16> = Some(0x8155);
+        if break_point.is_some() && break_point.unwrap() == self.pc {
+          println!("Hit break point"); //break here
         }
 
         //ログ出力
-        let output_log = false;
+        let output_log = true;
         if output_log {
           let instruction = &INSTRUCTION_SET[self.op as usize].instruction;
           let operand_1 = self.bus.read(rom, ppu, pad, self.pc + 1);

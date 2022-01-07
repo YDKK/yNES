@@ -21,8 +21,13 @@ impl VRam {
   fn read(&self, rom: &Rom, addr: u16) -> u8 {
     let addr = addr as usize;
     match addr {
-      0x0000..=0x0FFF => rom.get_chr()[addr],
-      0x1000..=0x1FFF => rom.get_chr()[addr - 0x1000],
+      0x0000..=0x1FFF => {
+        if rom.get_chr().len() == 0x1000 {
+          rom.get_chr()[addr & 0x0FFF]
+        } else {
+          rom.get_chr()[addr]
+        }
+      }
       0x2000..=0x23BF => self.name_table_0[addr - 0x2000],
       0x23C0..=0x23FF => self.attribute_table_0[addr - 0x23C0],
       0x2400..=0x27BF => self.name_table_1[addr - 0x2400],
@@ -35,12 +40,13 @@ impl VRam {
       0x3F00..=0x3F0F => self.background_palette[addr - 0x3F00],
       0x3F10..=0x3F1F => self.sprite_palette[addr - 0x3F10],
       0x3F20..=0x3FFF => self.read(rom, (addr - 0x0020) as u16),
-      _ => panic!(),
+      _ => self.read(rom, (addr - 0x4000) as u16),
     }
   }
   fn write(&mut self, addr: u16, value: u8) {
     let addr = addr as usize;
     match addr {
+      0x0000..=0x1FFF => {}
       0x2000..=0x23BF => self.name_table_0[addr - 0x2000] = value,
       0x23C0..=0x23FF => self.attribute_table_0[addr - 0x23C0] = value,
       0x2400..=0x27BF => self.name_table_1[addr - 0x2400] = value,
@@ -53,7 +59,7 @@ impl VRam {
       0x3F00..=0x3F0F => self.background_palette[addr - 0x3F00] = value,
       0x3F10..=0x3F1F => self.sprite_palette[addr - 0x3F10] = value,
       0x3F20..=0x3FFF => self.write((addr - 0x0020) as u16, value),
-      _ => panic!(),
+      _ => self.write((addr - 0x4000) as u16, value),
     }
   }
 }
