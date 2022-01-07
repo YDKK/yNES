@@ -103,7 +103,7 @@ impl Bus {
       }
     }
   }
-  pub fn write(&mut self, ppu: &mut Option<&mut Ppu>, addr: u16, value: u8) {
+  pub fn write(&mut self, rom: Option<&Rom>, ppu: &mut Option<&mut Ppu>, addr: u16, value: u8) {
     match addr {
       0x0000..=0x1FFF => {
         let addr = addr & 0x07FF;
@@ -114,12 +114,24 @@ impl Bus {
         let addr = (addr & 0x7) as u8;
         ppu.as_mut().unwrap().write(addr, value);
       }
+      0x4014 => {
+        //DMA
+        let addr = (value as u16) << 8;
+        let vec = (addr..=addr + 0xFF)
+          .map(|x| self.read(rom, ppu, None, x))
+          .collect::<Vec<u8>>();
+        let data = vec.as_slice().try_into().unwrap();
+        ppu.as_mut().unwrap().dma_write(data);
+      }
       0x4000..=0x4015 => {
         //APU
         //todo!()
       }
-      0x4016 => self.pad1.set_strobe((value & 0b1) == 0b1),
-      0x4017 => self.pad2.set_strobe((value & 0b1) == 0b1),
+      0x4016 => {
+        self.pad1.set_strobe((value & 0b1) == 0b1);
+        self.pad2.set_strobe((value & 0b1) == 0b1);
+      }
+      0x4017 => {}
       0x4018..=0x401F => todo!(), //?
       0x4020..=0x5FFF => {
         //拡張ROM

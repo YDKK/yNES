@@ -188,13 +188,13 @@ impl Cpu {
         let addressing_mode = &INSTRUCTION_SET[self.op as usize].mode;
 
         //ブレークポイント
-        let break_point: Option<u16> = Some(0x8155);
+        let break_point: Option<u16> = None; //Some(0x8155);
         if break_point.is_some() && break_point.unwrap() == self.pc {
           println!("Hit break point"); //break here
         }
 
         //ログ出力
-        let output_log = true;
+        let output_log = false;
         if output_log {
           let instruction = &INSTRUCTION_SET[self.op as usize].instruction;
           let operand_1 = self.bus.read(rom, ppu, pad, self.pc + 1);
@@ -562,7 +562,7 @@ impl Cpu {
             if self.is_accumulator {
               self.a = operand;
             } else {
-              self.bus.write(ppu, addr, operand);
+              self.bus.write(rom, ppu, addr, operand);
             }
 
             self.state = CpuState::ReadOpcode;
@@ -587,7 +587,7 @@ impl Cpu {
             if self.is_accumulator {
               self.a = operand;
             } else {
-              self.bus.write(ppu, addr, operand);
+              self.bus.write(rom, ppu, addr, operand);
             }
 
             self.state = CpuState::ReadOpcode;
@@ -615,7 +615,7 @@ impl Cpu {
             if self.is_accumulator {
               self.a = operand;
             } else {
-              self.bus.write(ppu, addr, operand);
+              self.bus.write(rom, ppu, addr, operand);
             }
 
             self.state = CpuState::ReadOpcode;
@@ -642,7 +642,7 @@ impl Cpu {
             if self.is_accumulator {
               self.a = operand;
             } else {
-              self.bus.write(ppu, addr, operand);
+              self.bus.write(rom, ppu, addr, operand);
             }
 
             self.state = CpuState::ReadOpcode;
@@ -862,7 +862,7 @@ impl Cpu {
               self.p.z = operand == 0;
 
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.write(ppu, addr, operand);
+              self.bus.write(rom, ppu, addr, operand);
             }
             2 => {
               self.state = CpuState::ReadOpcode;
@@ -1003,6 +1003,7 @@ impl Cpu {
           Instruction::STA | Instruction::STX | Instruction::STY => {
             let addr = get_addr(self.addr_h, self.addr_l);
             self.bus.write(
+              rom,
               ppu,
               addr,
               match INSTRUCTION_SET[self.op as usize].instruction {
@@ -1111,7 +1112,7 @@ impl Cpu {
     self.step += 1;
   }
   fn push(&mut self, value: u8) {
-    self.bus.write(&mut None, 0x0100 | self.sp as u16, value);
+    self.bus.write(None, &mut None, 0x0100 | self.sp as u16, value);
     self.sp = self.sp.wrapping_sub(1);
   }
   fn pop(&mut self) -> u8 {
