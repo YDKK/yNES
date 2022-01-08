@@ -12,8 +12,11 @@ menu MENU {
     }
   }
   POPUP "Speed(&S)" {
-    MENUITEM "Slow(&0)" , 300
-    MENUITEM "100%(&1)" , 301
+    MENUITEM "100%(&0)" , 300
+    MENUITEM "50%(&1)" , 301
+    MENUITEM "25%(&2)" , 302
+    MENUITEM "200%(&3)" , 310
+    MENUITEM "400%(&4)" , 311
   }
   POPUP "Help(&H)" {
     MENUITEM "About(&A)" , 60000

@@ -311,25 +311,24 @@ impl Ppu {
             loop {
               let addr = (sprite_index as usize) * 4;
               let sprite_y = self.bus.v_ram.sprite_memory[addr].saturating_add(1);
-              if (sprite_y / 8) == (tile_y as u8) {
+              if (sprite_y as u16 <= self.current_y) && (sprite_y as u16 + 7 >= self.current_y) {
                 let sprite_x = self.bus.v_ram.sprite_memory[addr + 3];
-                if (sprite_x / 8) == (tile_x as u8) {
+                if (sprite_x as u16 <= self.current_x) && (sprite_x as u16 + 7 >= self.current_x) {
                   let sprite_tile = self.bus.v_ram.sprite_memory[addr + 1];
                   let sprite_attr = self.bus.v_ram.sprite_memory[addr + 2];
                   //垂直反転
-                  let pixel_in_tile_y = if (sprite_attr & 0b1000_0000) == 0b1000_0000 {
-                    7 - pixel_in_tile_y
-                  } else {
-                    pixel_in_tile_y
-                  };
+                  let mut pixel_in_tile_y = (self.current_y - (sprite_y as u16)) % 8;
+                  if (sprite_attr & 0b1000_0000) == 0b1000_0000 {
+                    pixel_in_tile_y = 7 - pixel_in_tile_y;
+                  }
                   //水平反転
-                  let pixel_in_tile_x = if (sprite_attr & 0b0100_0000) == 0b0100_0000 {
-                    7 - pixel_in_tile_x
-                  } else {
-                    pixel_in_tile_x
-                  };
+                  let mut pixel_in_tile_x = (self.current_x - (sprite_x as u16)) % 8;
+                  if (sprite_attr & 0b0100_0000) == 0b0100_0000 {
+                    pixel_in_tile_x = 7 - pixel_in_tile_x;
+                  }
 
-                  let pattern = self.get_pattern(rom, sprite_tile, pixel_in_tile_x, pixel_in_tile_y, true);
+                  let pattern =
+                    self.get_pattern(rom, sprite_tile, pixel_in_tile_x as u16, pixel_in_tile_y as u16, true);
                   if pattern != 0 {
                     let background = (sprite_attr & 0b0010_0000) == 0b0010_0000;
                     let pallet = sprite_attr & 0b11;

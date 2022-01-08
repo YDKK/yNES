@@ -81,17 +81,15 @@ const colors: [[u8; 3]; 64] = [
     [0, 0, 0],
 ];
 
+const window_title: PSTR = PSTR(b"yNES for Windows\0".as_ptr() as _);
+const window_title_overload: PSTR = PSTR(b"yNES for Windows - [overload!]\0".as_ptr() as _);
+
 fn main() -> Result<()> {
     unsafe {
         CoInitializeEx(std::ptr::null_mut(), COINIT_MULTITHREADED)?;
     }
     let mut window = Window::new()?;
     window.run()
-}
-
-enum Speed {
-    Normal,
-    Slow,
 }
 
 struct Window {
@@ -108,7 +106,9 @@ struct Window {
     occlusion: u32,
     frequency: i64,
     nes: Option<Nes>,
-    speed: Speed,
+    target_fps: u16,
+    start_time: i64,
+    rendered_frames: u64,
 }
 
 impl Window {
@@ -137,7 +137,9 @@ impl Window {
             occlusion: 0,
             frequency,
             nes: None,
-            speed: Speed::Normal,
+            target_fps: 60,
+            start_time: 0,
+            rendered_frames: 0,
         })
     }
 
@@ -160,8 +162,8 @@ impl Window {
             let mut input = PadInput { ..Default::default() };
             unsafe {
                 input = PadInput {
-                    a: GetKeyState('A' as i32) < 0,
-                    b: GetKeyState('B' as i32) < 0,
+                    a: GetKeyState('Z' as i32) < 0,
+                    b: GetKeyState('X' as i32) < 0,
                     select: GetKeyState(VK_ESCAPE.into()) < 0,
                     start: GetKeyState(VK_RETURN.into()) < 0,
                     up: GetKeyState(VK_UP.into()) < 0,
@@ -171,14 +173,25 @@ impl Window {
                 };
             }
             let inputs = PadInputs { pad1: input, pad2: Default::default() };
-            match self.speed {
-                Speed::Normal => while nes.clock(&inputs) != true {},
-                Speed::Slow => {
-                    for _ in 0..100 {
-                        nes.clock(&inputs);
-                    }
+            let current_time = get_time().unwrap();
+            let time_diff = current_time - self.start_time;
+            let time_diff_sec = (time_diff as f64) / (self.frequency as f64);
+            let current_frames = (time_diff_sec * self.target_fps as f64) as u64;
+            let rendered_frames = self.rendered_frames;
+            let need_render_frames = current_frames - rendered_frames;
+            let overload_frames = need_render_frames.saturating_sub(5);
+            unsafe {
+                if overload_frames > 0 {
+                    SetWindowTextA(self.handle, window_title_overload);
+                } else {
+                    SetWindowTextA(self.handle, window_title);
                 }
             }
+            for _ in 0..std::cmp::min(need_render_frames, 5) {
+                while nes.clock(&inputs) != true {}
+            }
+            self.rendered_frames += need_render_frames;
+
             let screen = nes.get_screen();
             for (index, pixel) in screen.iter().enumerate() {
                 let index = index * 4;
@@ -188,15 +201,13 @@ impl Window {
                 self.frame_buffer[index + 2] = color[0]; //R
                 self.frame_buffer[index + 3] = 0xFF; //A
             }
-        }
-
-        let target = self.target.as_ref().unwrap();
-        unsafe { target.BeginDraw() };
-        self.draw()?;
-
-        unsafe {
             let target = self.target.as_ref().unwrap();
-            target.EndDraw(std::ptr::null_mut(), std::ptr::null_mut())?;
+            unsafe { target.BeginDraw() };
+            self.draw()?;
+            unsafe {
+                let target = self.target.as_ref().unwrap();
+                target.EndDraw(std::ptr::null_mut(), std::ptr::null_mut())?;
+            }
         }
 
         if let Err(error) = self.present(1, 0) {
@@ -367,6 +378,8 @@ impl Window {
                         let file_path = std::ffi::CStr::from_ptr(buffer.as_ptr() as _).to_str().unwrap();
                         println!("File selected: {}", file_path);
                         self.nes = Some(Nes::new(file_path.to_string()).unwrap());
+                        self.start_time = get_time().unwrap();
+                        self.rendered_frames = 0;
                         0
                     }
                     param @ 200..=299 => {
@@ -382,10 +395,15 @@ impl Window {
                     }
                     param @ 300..=399 => {
                         match param {
-                            300 => self.speed = Speed::Slow,
-                            301 => self.speed = Speed::Normal,
+                            300 => self.target_fps = 60,
+                            301 => self.target_fps = 30,
+                            302 => self.target_fps = 15,
+                            310 => self.target_fps = 120,
+                            311 => self.target_fps = 240,
                             _ => panic!(),
                         };
+                        self.start_time = get_time().unwrap();
+                        self.rendered_frames = 0;
                         0
                     }
                     60000 => todo!(),
@@ -438,7 +456,7 @@ impl Window {
             let handle = CreateWindowExA(
                 Default::default(),
                 PSTR(b"window\0".as_ptr() as _),
-                PSTR(b"yNES for Windows\0".as_ptr() as _),
+                window_title,
                 WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -631,4 +649,12 @@ unsafe fn GetWindowLong(window: HWND, index: WINDOW_LONG_PTR_INDEX) -> isize {
 #[cfg(target_pointer_width = "64")]
 unsafe fn GetWindowLong(window: HWND, index: WINDOW_LONG_PTR_INDEX) -> isize {
     GetWindowLongPtrA(window, index)
+}
+
+fn get_time() -> Result<i64> {
+    unsafe {
+        let mut time = 0;
+        QueryPerformanceCounter(&mut time).ok()?;
+        Ok(time)
+    }
 }
