@@ -31,7 +31,8 @@ impl std::default::Default for PadInput {
 
 impl Nes {
   pub fn new(rom_path: String) -> Result<Self, String> {
-    let nes = Nes { cpu: Cpu::new(), ppu: Ppu::new(), rom: Rom::open(rom_path)?, clock_count: 0 };
+    let rom = Rom::open(rom_path)?;
+    let nes = Nes { cpu: Cpu::new(), ppu: Ppu::new(rom.vertical_mirroring), rom, clock_count: 0 };
 
     Ok(nes)
   }

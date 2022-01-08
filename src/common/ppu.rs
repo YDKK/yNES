@@ -8,13 +8,14 @@ struct VRam {
   attribute_table_0: Box<[u8; 0x40]>,
   name_table_1: Box<[u8; 0x3C0]>,
   attribute_table_1: Box<[u8; 0x40]>,
-  name_table_2: Box<[u8; 0x3C0]>,
-  attribute_table_2: Box<[u8; 0x40]>,
-  name_table_3: Box<[u8; 0x3C0]>,
-  attribute_table_3: Box<[u8; 0x40]>,
+  // name_table_2: Box<[u8; 0x3C0]>,
+  // attribute_table_2: Box<[u8; 0x40]>,
+  // name_table_3: Box<[u8; 0x3C0]>,
+  // attribute_table_3: Box<[u8; 0x40]>,
   background_palette: Box<[u8; 0x10]>,
   sprite_palette: Box<[u8; 0x10]>,
   sprite_memory: Box<[u8; 0x100]>,
+  vertical_mirroring: bool,
 }
 
 impl VRam {
@@ -30,12 +31,36 @@ impl VRam {
       }
       0x2000..=0x23BF => self.name_table_0[addr - 0x2000],
       0x23C0..=0x23FF => self.attribute_table_0[addr - 0x23C0],
-      0x2400..=0x27BF => self.name_table_1[addr - 0x2400],
-      0x27C0..=0x27FF => self.attribute_table_1[addr - 0x27C0],
-      0x2800..=0x2BBF => self.name_table_2[addr - 0x2800],
-      0x2BC0..=0x2BFF => self.attribute_table_2[addr - 0x2BC0],
-      0x2C00..=0x2FBF => self.name_table_3[addr - 0x2C00],
-      0x2FC0..=0x2FFF => self.attribute_table_3[addr - 0x2FC0],
+      0x2400..=0x27BF => {
+        if self.vertical_mirroring {
+          self.name_table_1[addr - 0x2400]
+        } else {
+          self.name_table_0[addr - 0x2400]
+        }
+      }
+      0x27C0..=0x27FF => {
+        if self.vertical_mirroring {
+          self.attribute_table_1[addr - 0x27C0]
+        } else {
+          self.attribute_table_0[addr - 0x27C0]
+        }
+      }
+      0x2800..=0x2BBF => {
+        if self.vertical_mirroring {
+          self.name_table_0[addr - 0x2800]
+        } else {
+          self.name_table_1[addr - 0x2800]
+        }
+      }
+      0x2BC0..=0x2BFF => {
+        if self.vertical_mirroring {
+          self.attribute_table_0[addr - 0x2BC0]
+        } else {
+          self.attribute_table_1[addr - 0x2BC0]
+        }
+      }
+      0x2C00..=0x2FBF => self.name_table_1[addr - 0x2C00],
+      0x2FC0..=0x2FFF => self.attribute_table_1[addr - 0x2FC0],
       0x3000..=0x3EFF => self.read(rom, (addr - 0x1000) as u16),
       0x3F04 | 0x3F08 | 0x3F0C => self.background_palette[0],
       0x3F00..=0x3F0F => self.background_palette[addr - 0x3F00],
@@ -48,20 +73,46 @@ impl VRam {
   fn write(&mut self, addr: u16, value: u8) {
     let addr = addr as usize;
     match addr {
-      0x0000..=0x1FFF => {
-        let test = 1;
-      }
+      0x0000..=0x1FFF => {}
       0x2000..=0x23BF => self.name_table_0[addr - 0x2000] = value,
       0x23C0..=0x23FF => self.attribute_table_0[addr - 0x23C0] = value,
-      0x2400..=0x27BF => self.name_table_1[addr - 0x2400] = value,
-      0x27C0..=0x27FF => self.attribute_table_1[addr - 0x27C0] = value,
-      0x2800..=0x2BBF => self.name_table_2[addr - 0x2800] = value,
-      0x2BC0..=0x2BFF => self.attribute_table_2[addr - 0x2BC0] = value,
-      0x2C00..=0x2FBF => self.name_table_3[addr - 0x2C00] = value,
-      0x2FC0..=0x2FFF => self.attribute_table_3[addr - 0x2FC0] = value,
+      0x2400..=0x27BF => {
+        if self.vertical_mirroring {
+          self.name_table_1[addr - 0x2400] = value;
+        } else {
+          self.name_table_0[addr - 0x2400] = value;
+        }
+      }
+      0x27C0..=0x27FF => {
+        if self.vertical_mirroring {
+          self.attribute_table_1[addr - 0x27C0] = value;
+        } else {
+          self.attribute_table_0[addr - 0x27C0] = value;
+        }
+      }
+      0x2800..=0x2BBF => {
+        if self.vertical_mirroring {
+          self.name_table_0[addr - 0x2800] = value;
+        } else {
+          self.name_table_1[addr - 0x2800] = value;
+        }
+      }
+      0x2BC0..=0x2BFF => {
+        if self.vertical_mirroring {
+          self.attribute_table_0[addr - 0x2BC0] = value;
+        } else {
+          self.attribute_table_1[addr - 0x2BC0] = value;
+        }
+      }
+      0x2C00..=0x2FBF => {
+        self.name_table_1[addr - 0x2C00] = value;
+      }
+      0x2FC0..=0x2FFF => {
+        self.attribute_table_1[addr - 0x2FC0] = value;
+      }
       0x3000..=0x3EFF => self.write((addr - 0x1000) as u16, value),
       0x3F00..=0x3F0F => self.background_palette[addr - 0x3F00] = value,
-      0x3F10 | 0x3F14 | 0x3F18 | 0x3F1C => self.background_palette[addr - 0x3F10] = value,
+      0x3F10 | 0x3F14 | 0x3F18 | 0x3F1C => self.background_palette[0] = value,
       0x3F10..=0x3F1F => self.sprite_palette[addr - 0x3F10] = value,
       0x3F20..=0x3FFF => self.write((addr - 0x0020) as u16, value),
       _ => self.write((addr - 0x4000) as u16, value),
@@ -72,7 +123,7 @@ impl VRam {
 struct ControlRegister {
   nmi_on_v_blank: bool,
   ppu_select: bool,
-  sprite_size: bool, //One
+  sprite_size: bool,
   bg_pattern_table: bool,
   sprite_chr_table: bool,
   v_ram_io_addressing: bool,
@@ -211,6 +262,7 @@ pub struct Ppu {
   current_x: u16,
   current_y: u16,
   frame: [u8; 256 * 240],
+  read_buffer: u8,
 }
 
 struct Sprite {
@@ -221,7 +273,7 @@ struct Sprite {
 }
 
 impl Ppu {
-  pub fn new() -> Self {
+  pub fn new(vertical_mirroring: bool) -> Self {
     let ppu = Ppu {
       bus: Bus {
         v_ram: VRam {
@@ -229,20 +281,21 @@ impl Ppu {
           attribute_table_0: Box::new([0; 0x40]),
           name_table_1: Box::new([0; 0x3C0]),
           attribute_table_1: Box::new([0; 0x40]),
-          name_table_2: Box::new([0; 0x3C0]),
-          attribute_table_2: Box::new([0; 0x40]),
-          name_table_3: Box::new([0; 0x3C0]),
-          attribute_table_3: Box::new([0; 0x40]),
+          // name_table_2: Box::new([0; 0x3C0]),
+          // attribute_table_2: Box::new([0; 0x40]),
+          // name_table_3: Box::new([0; 0x3C0]),
+          // attribute_table_3: Box::new([0; 0x40]),
           background_palette: Box::new([0; 0x10]),
           sprite_palette: Box::new([0; 0x10]),
-          sprite_memory: Box::new([0; 0x100]), //?
+          sprite_memory: Box::new([0; 0x100]),
+          vertical_mirroring,
         },
       },
       registers: Registers {
         control_register: ControlRegister {
           nmi_on_v_blank: false,
-          ppu_select: false,
-          sprite_size: true, //One
+          ppu_select: true,
+          sprite_size: false,
           bg_pattern_table: false,
           sprite_chr_table: false,
           v_ram_io_addressing: false,
@@ -269,6 +322,7 @@ impl Ppu {
       current_x: 0,
       current_y: 0,
       frame: [0; 256 * 240],
+      read_buffer: 0,
     };
     ppu
   }
@@ -295,11 +349,38 @@ impl Ppu {
     match self.current_y {
       0..=239 => match self.current_x {
         0..=255 => {
-          let scrolled_x = self.current_x + self.scroll_horizontal as u16;
-          let scrolled_y = self.current_y + self.scroll_vertical as u16;
+          let mut scrolled_x = self.current_x + self.scroll_horizontal as u16;
+          let screen_overwrap_x = if scrolled_x > 255 {
+            scrolled_x -= 256;
+            true
+          } else {
+            false
+          };
+          let mut scrolled_y = self.current_y + self.scroll_vertical as u16;
+          let screen_overwrap_y = if scrolled_y > 239 {
+            scrolled_y -= 240;
+            true
+          } else {
+            false
+          };
+          let mut main_screen = self.registers.control_register.main_screen;
+          if screen_overwrap_x {
+            if main_screen % 2 == 0 {
+              main_screen += 1;
+            } else {
+              main_screen -= 1;
+            }
+          }
+          if screen_overwrap_y {
+            if main_screen / 2 == 0 {
+              main_screen += 2;
+            } else {
+              main_screen -= 2;
+            }
+          }
+
           let tile_x = scrolled_x / 8;
           let tile_y = scrolled_y / 8;
-          let tile_y_addr = tile_y * 0x20;
           let pixel_in_tile_x = scrolled_x % 8;
           let pixel_in_tile_y = scrolled_y % 8;
 
@@ -349,13 +430,14 @@ impl Ppu {
           let mut pattern = if self.registers.control_register2.show_bg
             && (self.current_x >= 8 || self.registers.control_register2.show_left_column_bg)
           {
-            let name_base_addr = match self.registers.control_register.main_screen {
+            let name_base_addr = match main_screen {
               0 => 0x2000,
               1 => 0x2400,
               2 => 0x2800,
               3 => 0x2C00,
               _ => panic!(),
             };
+            let tile_y_addr = tile_y * 0x20;
             let name_addr = name_base_addr + tile_y_addr + tile_x;
             let name = self.bus.v_ram.read(rom, name_addr);
             self.get_pattern(rom, name, pixel_in_tile_x, pixel_in_tile_y, false)
@@ -373,28 +455,27 @@ impl Ppu {
             self.registers.status_register.sprite_0_hit = true;
           }
 
-          let pallet = if sprite.is_none() || sprite.as_ref().unwrap().background {
+          let pallet_addr = if sprite.is_none() || (pattern != 0 && sprite.as_ref().unwrap().background) {
             //BGを描画する
             let attribute_block_x = tile_x / 4;
-            let attribute_block_y = tile_y_addr / 4;
-            let attribute_base_addr = match self.registers.control_register.main_screen {
+            let attribute_block_y_addr = tile_y / 4 * 8;
+            let attribute_base_addr = match main_screen {
               0 => 0x23C0,
               1 => 0x27C0,
               2 => 0x2BC0,
               3 => 0x2FC0,
               _ => panic!(),
             };
-            let attribute_addr = attribute_base_addr + attribute_block_y + attribute_block_x;
+            let attribute_addr = attribute_base_addr + attribute_block_y_addr + attribute_block_x;
             let attribute = self.bus.v_ram.read(rom, attribute_addr);
-            let block = ((scrolled_x / 32) % 2) + (((scrolled_y / 32) % 2) * 2);
-            (attribute >> (block * 2)) & 0b11
+            let block = ((tile_x / 2) % 2) + (((tile_y / 2) % 2) * 2);
+            0x3F00 + ((((attribute >> (block * 2)) & 0b11) as u16) << 2)
           } else {
             //スプライトを描画する
             pattern = sprite.as_ref().unwrap().pattern;
-            sprite.as_ref().unwrap().pallet
+            0x3F10 + ((sprite.as_ref().unwrap().pallet as u16) << 2)
           };
 
-          let pallet_addr = 0x3F00 + ((pallet as u16) << 2);
           let colors = [
             self.bus.v_ram.read(rom, pallet_addr),
             self.bus.v_ram.read(rom, pallet_addr + 1),
@@ -445,12 +526,16 @@ impl Ppu {
       }
       0x04 => {
         let result = self.bus.v_ram.sprite_memory[self.sprite_addr as usize];
-        self.sprite_addr = self.sprite_addr.wrapping_add(1); //TODO?
+        // self.sprite_addr = self.sprite_addr.wrapping_add(1); //TODO?
         result
       }
       0x07 => {
+        let mut result = self.read_buffer;
         let mut addr = get_addr(self.v_ram_addr_h, self.v_ram_addr_l);
-        let result = self.bus.v_ram.read(rom, addr);
+        self.read_buffer = self.bus.v_ram.read(rom, addr);
+        if (0x3F00..=0x3FFF).contains(&addr) {
+          result = self.read_buffer;
+        }
         addr = addr.wrapping_add(if self.registers.control_register.v_ram_io_addressing {
           32
         } else {
@@ -485,10 +570,15 @@ impl Ppu {
       0x06 => match self.state {
         State::Idle => {
           self.v_ram_addr_h = value;
+          self.scroll_vertical &= 0b0011_1011;
+          self.scroll_vertical |= (value & 0b11) << 6; //?????
+          self.registers.control_register.main_screen = (value & 0b00001100) >> 2; //?????
           self.state = State::Writing;
         }
         State::Writing => {
           self.v_ram_addr_l = value;
+          self.scroll_horizontal &= 0b00000111;
+          self.scroll_horizontal |= (value & 0b11111) << 3; //?????
           self.state = State::Idle;
         }
       },

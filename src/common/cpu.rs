@@ -70,6 +70,7 @@ pub struct Cpu {
   nmi: bool,
   irq: bool,
   adressing_overflow: bool,
+  suspend_cycle: u16,
 }
 
 #[derive(Debug)]
@@ -104,6 +105,7 @@ impl Cpu {
       nmi: false,
       irq: false,
       adressing_overflow: false,
+      suspend_cycle: 0,
     }
   }
   pub fn reset(&mut self) {
@@ -119,6 +121,11 @@ impl Cpu {
     let rom = Some(rom);
     let ppu = &mut Some(ppu);
     let pad = Some(pad);
+
+    if self.suspend_cycle > 0 {
+      self.suspend_cycle -= 1;
+      return;
+    }
 
     match self.state {
       CpuState::Reset => {
@@ -562,7 +569,7 @@ impl Cpu {
             if self.is_accumulator {
               self.a = operand;
             } else {
-              self.bus.write(rom, ppu, addr, operand);
+              self.suspend_cycle += self.bus.write(rom, ppu, addr, operand);
             }
 
             self.state = CpuState::ReadOpcode;
@@ -587,7 +594,7 @@ impl Cpu {
             if self.is_accumulator {
               self.a = operand;
             } else {
-              self.bus.write(rom, ppu, addr, operand);
+              self.suspend_cycle += self.bus.write(rom, ppu, addr, operand);
             }
 
             self.state = CpuState::ReadOpcode;
@@ -615,7 +622,7 @@ impl Cpu {
             if self.is_accumulator {
               self.a = operand;
             } else {
-              self.bus.write(rom, ppu, addr, operand);
+              self.suspend_cycle += self.bus.write(rom, ppu, addr, operand);
             }
 
             self.state = CpuState::ReadOpcode;
@@ -642,7 +649,7 @@ impl Cpu {
             if self.is_accumulator {
               self.a = operand;
             } else {
-              self.bus.write(rom, ppu, addr, operand);
+              self.suspend_cycle += self.bus.write(rom, ppu, addr, operand);
             }
 
             self.state = CpuState::ReadOpcode;
@@ -862,7 +869,7 @@ impl Cpu {
               self.p.z = operand == 0;
 
               let addr = get_addr(self.addr_h, self.addr_l);
-              self.bus.write(rom, ppu, addr, operand);
+              self.suspend_cycle += self.bus.write(rom, ppu, addr, operand);
             }
             2 => {
               self.state = CpuState::ReadOpcode;
@@ -1002,7 +1009,7 @@ impl Cpu {
           //ストア
           Instruction::STA | Instruction::STX | Instruction::STY => {
             let addr = get_addr(self.addr_h, self.addr_l);
-            self.bus.write(
+            self.suspend_cycle += self.bus.write(
               rom,
               ppu,
               addr,
@@ -1112,7 +1119,7 @@ impl Cpu {
     self.step += 1;
   }
   fn push(&mut self, value: u8) {
-    self.bus.write(None, &mut None, 0x0100 | self.sp as u16, value);
+    self.suspend_cycle += self.bus.write(None, &mut None, 0x0100 | self.sp as u16, value);
     self.sp = self.sp.wrapping_sub(1);
   }
   fn pop(&mut self) -> u8 {

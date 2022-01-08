@@ -162,8 +162,8 @@ impl Window {
             let mut input = PadInput { ..Default::default() };
             unsafe {
                 input = PadInput {
-                    a: GetKeyState('Z' as i32) < 0,
-                    b: GetKeyState('X' as i32) < 0,
+                    a: GetKeyState('X' as i32) < 0,
+                    b: GetKeyState('Z' as i32) < 0,
                     select: GetKeyState(VK_ESCAPE.into()) < 0,
                     start: GetKeyState(VK_RETURN.into()) < 0,
                     up: GetKeyState(VK_UP.into()) < 0,

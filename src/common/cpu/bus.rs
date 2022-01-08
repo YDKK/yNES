@@ -103,7 +103,7 @@ impl Bus {
       }
     }
   }
-  pub fn write(&mut self, rom: Option<&Rom>, ppu: &mut Option<&mut Ppu>, addr: u16, value: u8) {
+  pub fn write(&mut self, rom: Option<&Rom>, ppu: &mut Option<&mut Ppu>, addr: u16, value: u8) -> u16 {
     match addr {
       0x0000..=0x1FFF => {
         let addr = addr & 0x07FF;
@@ -122,6 +122,7 @@ impl Bus {
           .collect::<Vec<u8>>();
         let data = vec.as_slice().try_into().unwrap();
         ppu.as_mut().unwrap().dma_write(data);
+        return 513;
       }
       0x4000..=0x4015 => {
         //APU
@@ -146,5 +147,6 @@ impl Bus {
         panic!()
       }
     }
+    0
   }
 }
