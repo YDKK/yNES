@@ -1,3 +1,4 @@
+use super::super::apu::*;
 use super::super::nes::{PadInput, PadInputs};
 use super::super::ppu::*;
 use super::super::rom::*;
@@ -67,7 +68,14 @@ impl Bus {
       pad2: Pad { read_cycle: 0, strobe: false },
     }
   }
-  pub fn read(&mut self, rom: Option<&Rom>, ppu: &mut Option<&mut Ppu>, inputs: Option<&PadInputs>, addr: u16) -> u8 {
+  pub fn read(
+    &mut self,
+    rom: Option<&Rom>,
+    apu: &mut Option<&mut Apu>,
+    ppu: &mut Option<&mut Ppu>,
+    inputs: Option<&PadInputs>,
+    addr: u16,
+  ) -> u8 {
     match addr {
       0x0000..=0x1FFF => {
         let addr = addr & 0x07FF;
@@ -80,7 +88,8 @@ impl Bus {
       }
       0x4000..=0x4015 => {
         //APU
-        todo!()
+        let addr = addr as u8;
+        apu.as_mut().unwrap().read(addr)
       }
       0x4016 => self.pad1.read(&inputs.unwrap().pad1),
       0x4017 => self.pad2.read(&inputs.unwrap().pad2),
@@ -103,7 +112,14 @@ impl Bus {
       }
     }
   }
-  pub fn write(&mut self, rom: Option<&Rom>, ppu: &mut Option<&mut Ppu>, addr: u16, value: u8) -> u16 {
+  pub fn write(
+    &mut self,
+    rom: Option<&Rom>,
+    apu: &mut Option<&mut Apu>,
+    ppu: &mut Option<&mut Ppu>,
+    addr: u16,
+    value: u8,
+  ) -> u16 {
     match addr {
       0x0000..=0x1FFF => {
         let addr = addr & 0x07FF;
@@ -111,14 +127,14 @@ impl Bus {
       }
       0x2000..=0x3FFF => {
         //PPU
-        let addr = (addr & 0x7) as u8;
+        let addr = (addr & 0xFF) as u8;
         ppu.as_mut().unwrap().write(addr, value);
       }
       0x4014 => {
         //DMA
         let addr = (value as u16) << 8;
         let vec = (addr..=addr + 0xFF)
-          .map(|x| self.read(rom, ppu, None, x))
+          .map(|x| self.read(rom, apu, ppu, None, x))
           .collect::<Vec<u8>>();
         let data = vec.as_slice().try_into().unwrap();
         ppu.as_mut().unwrap().dma_write(data);
@@ -126,7 +142,8 @@ impl Bus {
       }
       0x4000..=0x4015 => {
         //APU
-        //todo!()
+        let addr = addr as u8;
+        apu.as_mut().unwrap().write(addr, value);
       }
       0x4016 => {
         self.pad1.set_strobe((value & 0b1) == 0b1);

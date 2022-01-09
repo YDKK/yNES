@@ -3,6 +3,9 @@
 // under the MIT license.
 // The copyright of the original code snippets belongs to Microsoft Corporation.
 
+use std::fs::File;
+use std::io::Write;
+
 use windows::{
     core::*,
     Win32::{
@@ -106,6 +109,8 @@ struct Window {
     occlusion: u32,
     frequency: i64,
     nes: Option<Nes>,
+    test_audio_out: Option<std::fs::File>,
+    test_audio_count: u8,
     target_fps: u16,
     start_time: i64,
     rendered_frames: u64,
@@ -137,6 +142,8 @@ impl Window {
             occlusion: 0,
             frequency,
             nes: None,
+            test_audio_out: None,
+            test_audio_count: 0,
             target_fps: 60,
             start_time: 0,
             rendered_frames: 0,
@@ -188,7 +195,21 @@ impl Window {
                 }
             }
             for _ in 0..std::cmp::min(need_render_frames, 5) {
-                while nes.clock(&inputs) != true {}
+                let mut end_frame = false;
+                while end_frame != true {
+                    let result = nes.clock(&inputs);
+                    end_frame = result.0;
+                    let apu_out = result.1;
+                    if apu_out.is_some() && self.test_audio_out.is_some() {
+                        // if self.test_audio_count % 20 == 0 {
+                            let file = self.test_audio_out.as_mut().unwrap();
+                            let pcm = apu_out.unwrap();
+                            let pcm_bytes = pcm.to_be_bytes();
+                            file.write_all(&pcm_bytes);
+                        // }
+                        // self.test_audio_count = self.test_audio_count.wrapping_add(1);
+                    }
+                }
             }
             self.rendered_frames += need_render_frames;
 
@@ -378,6 +399,8 @@ impl Window {
                         let file_path = std::ffi::CStr::from_ptr(buffer.as_ptr() as _).to_str().unwrap();
                         println!("File selected: {}", file_path);
                         self.nes = Some(Nes::new(file_path.to_string()).unwrap());
+                        println!("current_dir: {:?}", std::env::current_dir());
+                        self.test_audio_out = Some(File::create("test_audio_out.pcm").unwrap());
                         self.start_time = get_time().unwrap();
                         self.rendered_frames = 0;
                         0
