@@ -201,13 +201,13 @@ impl Window {
                     end_frame = result.0;
                     let apu_out = result.1;
                     if apu_out.is_some() && self.test_audio_out.is_some() {
-                        // if self.test_audio_count % 20 == 0 {
+                        if self.test_audio_count % 37 == 0 { //とりあえず雑に間引く
                             let file = self.test_audio_out.as_mut().unwrap();
                             let pcm = apu_out.unwrap();
                             let pcm_bytes = pcm.to_be_bytes();
                             file.write_all(&pcm_bytes);
-                        // }
-                        // self.test_audio_count = self.test_audio_count.wrapping_add(1);
+                        }
+                        self.test_audio_count = self.test_audio_count.wrapping_add(1);
                     }
                 }
             }

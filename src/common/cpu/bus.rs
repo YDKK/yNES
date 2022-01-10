@@ -140,16 +140,15 @@ impl Bus {
         ppu.as_mut().unwrap().dma_write(data);
         return 513;
       }
-      0x4000..=0x4015 => {
-        //APU
-        let addr = addr as u8;
-        apu.as_mut().unwrap().write(addr, value);
-      }
       0x4016 => {
         self.pad1.set_strobe((value & 0b1) == 0b1);
         self.pad2.set_strobe((value & 0b1) == 0b1);
       }
-      0x4017 => {}
+      0x4000..=0x4017 => {
+        //APU
+        let addr = addr as u8;
+        apu.as_mut().unwrap().write(addr, value);
+      }
       0x4018..=0x401F => todo!(), //?
       0x4020..=0x5FFF => {
         //拡張ROM

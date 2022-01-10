@@ -43,19 +43,18 @@ impl Nes {
     let mut apu_out = None;
     if self.clock_count % 3 == 0 {
       self.cpu.clock(&self.rom, &mut self.apu, &mut self.ppu, pad);
-      let (value, irq) = self.apu.clock();
-      if irq {
-        self.cpu.irq();
-      }
+      let value = self.apu.clock();
       apu_out = Some(value);
     }
-    self.clock_count += 1;
-    self.clock_count %= 3;
 
     let (end_frame, nmi) = self.ppu.clock(&self.rom);
     if nmi {
       self.cpu.nmi();
     }
+
+    self.clock_count += 1;
+    self.clock_count %= 3;
+
     (end_frame, apu_out)
   }
   pub fn get_screen(&self) -> &[u8; 256 * 240] {

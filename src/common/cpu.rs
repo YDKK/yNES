@@ -182,6 +182,7 @@ impl Cpu {
           self.step = 0;
           return;
         }
+        self.irq |= apu.as_ref().unwrap().check_irq();
         if self.irq {
           self.irq = false;
           if self.p.i == false {
