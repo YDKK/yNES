@@ -10,15 +10,18 @@ trait Channel {
   fn set_timer_low(&mut self, value: u8);
   fn set_timer_high(&mut self, value: u8);
   fn reset_sequencer(&mut self);
+  fn set_sweep(&mut self, enabled: bool, divider_period: u8, negate: bool, shift_count: u8);
 }
 struct Divider {
   period: u8,
 }
 impl Divider {
-  fn clock(&mut self, decay_level_counter: &mut DecayLevelCounter, loop_flag: bool, period: u8) {
+  fn clock(&mut self, decay_level_counter: &mut Option<&mut DecayLevelCounter>, loop_flag: bool, period: u8) {
     if self.period == 0 {
       self.load(period);
-      decay_level_counter.clock(loop_flag);
+      if decay_level_counter.is_some() {
+        decay_level_counter.as_mut().unwrap().clock(loop_flag);
+      }
     } else {
       self.period -= 1;
     }
@@ -57,13 +60,58 @@ impl Envelope {
       self.decay_level_counter.reset();
       self.divider.load(volume);
     } else {
-      self.divider.clock(&mut self.decay_level_counter, loop_flag, volume);
+      self
+        .divider
+        .clock(&mut Some(&mut self.decay_level_counter), loop_flag, volume);
     }
     self.output = if constant_volume {
       volume
     } else {
+      //println!("{}", self.decay_level_counter.count);
       self.decay_level_counter.count
     }
+  }
+}
+struct Sweep {
+  divider: Divider,
+  reload_flag: bool,
+  enabled_flag: bool,
+  divider_period: u8,
+  negate_flag: bool,
+  shift_count: u8,
+  mute: bool,
+}
+impl Sweep {
+  fn clock(&mut self, timer: u16, is_pulse_1: bool) -> u16 {
+    let mut change_amount = (timer >> self.shift_count) as i16;
+    if self.negate_flag {
+      change_amount = if is_pulse_1 { -change_amount - 1 } else { -change_amount }
+    }
+    let target_period = timer.wrapping_add(change_amount as u16);
+
+    self.mute = (timer < 8) || (target_period > 0x7FF);
+
+    let result = if self.enabled_flag && self.shift_count != 0 && self.divider.period == 0 && self.mute == false {
+      target_period
+    } else {
+      timer
+    };
+
+    if self.divider.period == 0 || self.reload_flag {
+      self.divider.load(self.divider_period);
+      self.reload_flag = false;
+    } else {
+      self.divider.clock(&mut None, false, self.divider_period); //TODO: 引数検討
+    }
+
+    result
+  }
+  fn setup(&mut self, enabled: bool, divider_period: u8, negate: bool, shift_count: u8) {
+    self.enabled_flag = enabled;
+    self.divider_period = divider_period;
+    self.negate_flag = negate;
+    self.shift_count = shift_count;
+    self.reload_flag = true;
   }
 }
 struct Pulse {
@@ -76,9 +124,10 @@ struct Pulse {
   current_sequencer_position: u8,
   enable: bool,
   envelope: Envelope,
-  //TODO: sweep
+  sweep: Sweep,
   length_counter: LengthCounter,
   last_output: u8,
+  is_pulse_1: bool,
 }
 impl Pulse {
   const OUTPUT: [[bool; 8]; 4] = [
@@ -94,6 +143,9 @@ impl Pulse {
   }
   fn clock_length_counter(&mut self) {
     self.length_counter.clock(self.enable, self.length_counter_halt);
+  }
+  fn clock_sweep(&mut self) {
+    self.timer = self.sweep.clock(self.timer, self.is_pulse_1);
   }
 }
 impl Default for Pulse {
@@ -113,8 +165,18 @@ impl Default for Pulse {
         decay_level_counter: DecayLevelCounter { count: 0 },
         output: 0,
       },
+      sweep: Sweep {
+        divider: Divider { period: 0 },
+        reload_flag: false,
+        divider_period: 0,
+        enabled_flag: false,
+        negate_flag: false,
+        shift_count: 0,
+        mute: false,
+      },
       length_counter: LengthCounter { length: 0 },
       last_output: 0,
+      is_pulse_1: false,
     }
   }
 }
@@ -126,7 +188,6 @@ impl Channel for Pulse {
   }
   fn clock(&mut self) {
     let envelope = self.envelope.output;
-    let sweep = 0; //TODO
     let length = self.length_counter.length;
     if self.current_time == 0 {
       self.current_time = self.timer;
@@ -137,7 +198,7 @@ impl Channel for Pulse {
     };
     let sequencer = Pulse::OUTPUT[self.duty as usize][self.current_sequencer_position as usize];
 
-    self.last_output = if sequencer == false || length == 0 || self.current_time < 8 {
+    self.last_output = if self.sweep.mute || sequencer == false || length == 0 || self.timer < 8 {
       0
     } else {
       envelope
@@ -174,6 +235,9 @@ impl Channel for Pulse {
   fn reset_sequencer(&mut self) {
     self.current_sequencer_position = 0;
   }
+  fn set_sweep(&mut self, enabled: bool, divider_period: u8, negate: bool, shift_count: u8) {
+    self.sweep.setup(enabled, divider_period, negate, shift_count);
+  }
 }
 struct FrameCounter {
   mode: bool,              //true: 5-step sequence, false: 4-step sequence
@@ -196,6 +260,8 @@ impl FrameCounter {
         pulse2.clock_envelope();
         pulse1.clock_length_counter();
         pulse2.clock_length_counter();
+        pulse1.clock_sweep();
+        pulse2.clock_sweep();
       }
       11185 => {
         //エンベローブ, 三角波線形カウンタ
@@ -211,6 +277,8 @@ impl FrameCounter {
           pulse2.clock_envelope();
           pulse1.clock_length_counter();
           pulse2.clock_length_counter();
+          pulse1.clock_sweep();
+          pulse2.clock_sweep();
           self.count = 0;
           self.interrupt_flag |= !self.interrupt_inhibit;
           return;
@@ -223,6 +291,8 @@ impl FrameCounter {
         pulse2.clock_envelope();
         pulse1.clock_length_counter();
         pulse2.clock_length_counter();
+        pulse1.clock_sweep();
+        pulse2.clock_sweep();
         self.count = 0;
         return;
       }
@@ -241,6 +311,8 @@ impl FrameCounter {
       pulse2.clock_envelope();
       pulse1.clock_length_counter();
       pulse2.clock_length_counter();
+      pulse1.clock_sweep();
+      pulse2.clock_sweep();
     }
   }
 }
@@ -299,7 +371,7 @@ pub struct Apu {
 impl Apu {
   pub fn new() -> Self {
     Apu {
-      pulse1: Pulse { ..Default::default() },
+      pulse1: Pulse { is_pulse_1: true, ..Default::default() },
       pulse2: Pulse { ..Default::default() },
       frame_counter: FrameCounter { mode: false, interrupt_inhibit: false, count: 0, interrupt_flag: false },
       mixer: Mixer::new(),
@@ -307,16 +379,16 @@ impl Apu {
     }
   }
   pub fn clock(&mut self) -> f32 {
-    self.frame_counter.clock(&mut self.pulse1, &mut self.pulse2);
-
     if self.clock_count % 2 == 0 {
+      self.frame_counter.clock(&mut self.pulse1, &mut self.pulse2);
       self.pulse1.clock();
       self.pulse2.clock();
     }
     let pulse1 = self.pulse1.get_value();
     let pulse2 = self.pulse2.get_value();
 
-    self.clock_count = self.clock_count.wrapping_add(1);
+    self.clock_count += 1;
+    self.clock_count %= 2;
     self.mixer.mix(pulse1, pulse2)
   }
   pub fn write(&mut self, addr: u8, value: u8) {
@@ -332,15 +404,20 @@ impl Apu {
     match addr {
       0x00 | 0x04 => {
         let target = target.as_mut().unwrap();
-        target.set_duty((value & 0b11000000) >> 6);
+        target.set_duty((value & 0b1100_0000) >> 6);
         target
-          .set_length_counter_halt((value & 0b00100000) == 0b00100000);
+          .set_length_counter_halt((value & 0b0010_0000) == 0b0010_0000);
         target
-          .set_constant_volume((value & 0b00010000) == 0b00010000);
+          .set_constant_volume((value & 0b0001_0000) == 0b0001_0000);
         target.set_volume(value & 0x0F);
       }
       0x01 | 0x05 => {
-        //TODO: Pulse Sweep
+        let target = target.as_mut().unwrap();
+        let enabled = (value & 0b1000_0000) == 0b1000_0000;
+        let period = (value & 0b0111_0000) >> 4;
+        let negate = (value & 0b0000_1000) == 0b0000_1000;
+        let shift_count = value & 0b0000_0111;
+        target.set_sweep(enabled, period, negate, shift_count);
       }
       0x02 | 0x06 /* | 0x0A //TODO: Triangle*/ => {
         //Timer low
@@ -349,7 +426,7 @@ impl Apu {
       }
       0x03 | 0x07 /*| 0x0B | 0x0F*/ => {
         let target = target.as_mut().unwrap();
-        target.set_length(value & 0xF8 >> 3);
+        target.set_length((value & 0xF8) >> 3);
         if addr != 0x0F {//Noiseにはタイマーがない
           target.set_timer_high(value & 0b111);
         }
@@ -385,5 +462,8 @@ impl Apu {
   }
   pub fn check_irq(&self) -> bool {
     self.frame_counter.interrupt_flag
+  }
+  pub fn set_irq(&mut self, value: bool) {
+    self.frame_counter.interrupt_flag = value;
   }
 }

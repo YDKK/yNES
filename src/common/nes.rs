@@ -41,7 +41,7 @@ impl Nes {
   //(end_frame, apu_out)
   pub fn clock(&mut self, pad: &PadInputs) -> (bool, Option<f32>) {
     let mut apu_out = None;
-    if self.clock_count % 3 == 0 {
+    if self.clock_count == 0 {
       self.cpu.clock(&self.rom, &mut self.apu, &mut self.ppu, pad);
       let value = self.apu.clock();
       apu_out = Some(value);

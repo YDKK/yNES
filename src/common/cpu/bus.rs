@@ -105,8 +105,8 @@ impl Bus {
       0x8000..=0xFFFF => {
         //PRG-ROM
         let mut addr = addr - 0x8000;
-        if rom.unwrap().get_prog().len() == 0x4000 {
-          addr = addr - 0x4000;
+        if addr >= 0x4000 && rom.unwrap().get_prog().len() == 0x4000 {
+          addr -= 0x4000;
         }
         rom.unwrap().get_prog()[addr as usize]
       }

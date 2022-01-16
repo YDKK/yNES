@@ -11,7 +11,9 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::{Direct2D::Common::*, Direct2D::*, Direct3D::*, Direct3D11::*, Dxgi::Common::*, Dxgi::*, Gdi::*},
-        System::{Com::*, LibraryLoader::*, Performance::*},
+        Media::Audio::XAudio2::*,
+        Media::Audio::*,
+        System::{Com::*, LibraryLoader::*, Performance::*, SystemInformation::*},
         UI::{Controls::Dialogs::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
 };
@@ -114,6 +116,11 @@ struct Window {
     target_fps: u16,
     start_time: i64,
     rendered_frames: u64,
+    xaudio2: IXAudio2,
+    mastering_voice: IXAudio2MasteringVoice,
+    source_voice: IXAudio2SourceVoice,
+    pcm_buffers: Box<[[f32; 3025]; 2]>,
+    pcm_buffer_i: usize,
 }
 
 impl Window {
@@ -127,6 +134,8 @@ impl Window {
 
         let mut frequency = 0;
         unsafe { QueryPerformanceFrequency(&mut frequency).ok()? };
+
+        let (xaudio2, mastering_voice, source_voice) = create_mastering_voice()?;
 
         Ok(Window {
             handle: 0,
@@ -147,7 +156,75 @@ impl Window {
             target_fps: 60,
             start_time: 0,
             rendered_frames: 0,
+            xaudio2,
+            mastering_voice,
+            source_voice,
+            pcm_buffers: Box::new([[0.0; 3025]; 2]),
+            pcm_buffer_i: 0,
         })
+    }
+
+    fn run(&mut self) -> Result<()> {
+        unsafe {
+            let instance = GetModuleHandleA(None);
+            debug_assert!(instance != 0);
+
+            let wc = WNDCLASSA {
+                hInstance: instance,
+                lpszClassName: PSTR(b"window\0".as_ptr() as _),
+                lpszMenuName: PSTR(b"menu\0".as_ptr() as _),
+                style: CS_HREDRAW | CS_VREDRAW,
+                lpfnWndProc: Some(Self::wndproc),
+                ..Default::default()
+            };
+
+            let atom = RegisterClassA(&wc);
+            debug_assert!(atom != 0);
+
+            let handle = CreateWindowExA(
+                Default::default(),
+                PSTR(b"window\0".as_ptr() as _),
+                window_title,
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                None,
+                None,
+                instance,
+                self as *mut _ as _,
+            );
+
+            self.set_window_size(2);
+
+            debug_assert!(handle != 0);
+            debug_assert!(handle == self.handle);
+            let mut message = MSG::default();
+
+            self.source_voice.Start(0, XAUDIO2_COMMIT_NOW)?;
+
+            loop {
+                if self.visible {
+                    self.render()?;
+
+                    while PeekMessageA(&mut message, None, 0, 0, PM_REMOVE).into() {
+                        if message.message == WM_QUIT {
+                            return Ok(());
+                        }
+                        DispatchMessageA(&message);
+                    }
+                } else {
+                    GetMessageA(&mut message, None, 0, 0);
+
+                    if message.message == WM_QUIT {
+                        return Ok(());
+                    }
+
+                    DispatchMessageA(&message);
+                }
+            }
+        }
     }
 
     fn render(&mut self) -> Result<()> {
@@ -194,24 +271,55 @@ impl Window {
                     SetWindowTextA(self.handle, window_title);
                 }
             }
+            let mut pcm_filled: usize = 0;
             for _ in 0..std::cmp::min(need_render_frames, 5) {
                 let mut end_frame = false;
                 while end_frame != true {
                     let result = nes.clock(&inputs);
                     end_frame = result.0;
                     let apu_out = result.1;
-                    if apu_out.is_some() && self.test_audio_out.is_some() {
-                        if self.test_audio_count % 37 == 0 { //とりあえず雑に間引く
-                            let file = self.test_audio_out.as_mut().unwrap();
+                    if apu_out.is_some() {
+                        //とりあえず雑に間引く
+                        if self.test_audio_count % 10 == 0 {
                             let pcm = apu_out.unwrap();
-                            let pcm_bytes = pcm.to_be_bytes();
-                            file.write_all(&pcm_bytes);
+                            if pcm_filled < 3025 {
+                                self.pcm_buffers[self.pcm_buffer_i][pcm_filled] = pcm;
+                                pcm_filled += 1;
+                            }
+                            if self.test_audio_out.is_some() {
+                                let file = self.test_audio_out.as_mut().unwrap();
+                                let pcm_bytes = pcm.to_be_bytes();
+                                file.write_all(&pcm_bytes);
+                            }
                         }
-                        self.test_audio_count = self.test_audio_count.wrapping_add(1);
+                        self.test_audio_count += 1;
+                        self.test_audio_count %= 10;
                     }
                 }
             }
             self.rendered_frames += need_render_frames;
+
+            if pcm_filled > 0 {
+                unsafe {
+                    let buffer_ptr: *mut u8 = &mut *(self.pcm_buffers[self.pcm_buffer_i].as_ptr() as *mut u8);
+                    let buffer = XAUDIO2_BUFFER {
+                        Flags: 0,
+                        AudioBytes: (pcm_filled * 4) as u32,
+                        pAudioData: buffer_ptr,
+                        PlayBegin: 0,
+                        PlayLength: 0,
+                        LoopBegin: 0,
+                        LoopLength: 0,
+                        LoopCount: 0,
+                        pContext: std::ptr::null_mut(),
+                    };
+                    self.source_voice.FlushSourceBuffers()?;
+                    self.source_voice
+                        .SubmitSourceBuffer(&buffer, std::ptr::null() as *const XAUDIO2_BUFFER_WMA)?;
+                }
+                self.pcm_buffer_i += 1;
+                self.pcm_buffer_i %= 2;
+            }
 
             let screen = nes.get_screen();
             for (index, pixel) in screen.iter().enumerate() {
@@ -397,10 +505,12 @@ impl Window {
                         };
                         GetOpenFileNameA(&mut file);
                         let file_path = std::ffi::CStr::from_ptr(buffer.as_ptr() as _).to_str().unwrap();
-                        println!("File selected: {}", file_path);
-                        self.nes = Some(Nes::new(file_path.to_string()).unwrap());
+                        if file_path != "" {
+                            println!("File selected: {}", file_path);
+                            self.nes = Some(Nes::new(file_path.to_string()).unwrap());
+                        }
                         println!("current_dir: {:?}", std::env::current_dir());
-                        self.test_audio_out = Some(File::create("test_audio_out.pcm").unwrap());
+                        //self.test_audio_out = Some(File::create("test_audio_out.pcm").unwrap());
                         self.start_time = get_time().unwrap();
                         self.rendered_frames = 0;
                         0
@@ -456,67 +566,6 @@ impl Window {
                 new_height,
                 SWP_NOMOVE | SWP_NOZORDER,
             );
-        }
-    }
-
-    fn run(&mut self) -> Result<()> {
-        unsafe {
-            let instance = GetModuleHandleA(None);
-            debug_assert!(instance != 0);
-
-            let wc = WNDCLASSA {
-                hInstance: instance,
-                lpszClassName: PSTR(b"window\0".as_ptr() as _),
-                lpszMenuName: PSTR(b"menu\0".as_ptr() as _),
-                style: CS_HREDRAW | CS_VREDRAW,
-                lpfnWndProc: Some(Self::wndproc),
-                ..Default::default()
-            };
-
-            let atom = RegisterClassA(&wc);
-            debug_assert!(atom != 0);
-
-            let handle = CreateWindowExA(
-                Default::default(),
-                PSTR(b"window\0".as_ptr() as _),
-                window_title,
-                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                None,
-                None,
-                instance,
-                self as *mut _ as _,
-            );
-
-            self.set_window_size(2);
-
-            debug_assert!(handle != 0);
-            debug_assert!(handle == self.handle);
-            let mut message = MSG::default();
-
-            loop {
-                if self.visible {
-                    self.render()?;
-
-                    while PeekMessageA(&mut message, None, 0, 0, PM_REMOVE).into() {
-                        if message.message == WM_QUIT {
-                            return Ok(());
-                        }
-                        DispatchMessageA(&message);
-                    }
-                } else {
-                    GetMessageA(&mut message, None, 0, 0);
-
-                    if message.message == WM_QUIT {
-                        return Ok(());
-                    }
-
-                    DispatchMessageA(&message);
-                }
-            }
         }
     }
 
@@ -679,5 +728,47 @@ fn get_time() -> Result<i64> {
         let mut time = 0;
         QueryPerformanceCounter(&mut time).ok()?;
         Ok(time)
+    }
+}
+
+fn create_mastering_voice() -> Result<(IXAudio2, IXAudio2MasteringVoice, IXAudio2SourceVoice)> {
+    unsafe {
+        let mut xaudio2: Option<IXAudio2> = None;
+        XAudio2CreateWithVersionInfo(&mut xaudio2 as *mut _, 0, XAUDIO2_DEFAULT_PROCESSOR, NTDDI_WIN10)?;
+
+        let mut mastering_voice: Option<IXAudio2MasteringVoice> = None;
+        xaudio2.as_ref().unwrap().CreateMasteringVoice(
+            &mut mastering_voice as *mut _,
+            1,
+            181500,
+            0,
+            None,
+            std::ptr::null(),
+            0,
+        )?;
+
+        let format: PCMWAVEFORMAT = PCMWAVEFORMAT {
+            wf: WAVEFORMAT {
+                wFormatTag: 0x0003, //WAVE_FORMAT_IEEE_FLOAT
+                nChannels: 1,
+                nSamplesPerSec: 181500,
+                nAvgBytesPerSec: 181500 * 4,
+                nBlockAlign: 4,
+            },
+            wBitsPerSample: 32,
+        };
+        let format_ex = std::mem::transmute::<&PCMWAVEFORMAT, &WAVEFORMATEX>(&format);
+
+        let mut source_voice: Option<IXAudio2SourceVoice> = None;
+        xaudio2.as_ref().unwrap().CreateSourceVoice(
+            &mut source_voice as *mut _,
+            format_ex,
+            0,
+            1.0,
+            None,
+            std::ptr::null(),
+            std::ptr::null(),
+        )?;
+        Ok((xaudio2.unwrap(), mastering_voice.unwrap(), source_voice.unwrap()))
     }
 }

@@ -23,6 +23,9 @@ impl VRam {
     let addr = addr as usize;
     match addr {
       0x0000..=0x1FFF => {
+        if rom.get_chr().len() == 0 {
+          return 0;
+        }
         if rom.get_chr().len() == 0x1000 {
           rom.get_chr()[addr - 0x1000]
         } else {

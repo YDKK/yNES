@@ -185,6 +185,7 @@ impl Cpu {
         self.irq |= apu.as_ref().unwrap().check_irq();
         if self.irq {
           self.irq = false;
+          //apu.as_mut().unwrap().set_irq(false);
           if self.p.i == false {
             self.state = CpuState::Irq;
             self.step = 0;
