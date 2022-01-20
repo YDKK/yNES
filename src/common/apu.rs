@@ -218,7 +218,6 @@ impl Channel for Pulse {
   }
   fn set_length_counter_halt(&mut self, value: bool) {
     self.length_counter_halt = value;
-    self.length_counter.length = 0;
   }
   fn set_constant_volume(&mut self, value: bool) {
     self.constant_volume = value;
@@ -447,27 +446,27 @@ impl Apu {
       }
       _ =>{}//TODO
     }
-    println!(
-      "4000: {:02b}{}{}{:04b}",
-      self.pulse1.duty,
-      if self.pulse1.length_counter_halt { 1 } else { 0 },
-      if self.pulse1.constant_volume { 1 } else { 0 },
-      self.pulse1.volume
-    );
-    println!(
-      "4001: {}{:03b}{}{:03b}",
-      if self.pulse1.sweep.enabled_flag { 1 } else { 0 },
-      self.pulse1.sweep.divider_period,
-      if self.pulse1.sweep.negate_flag { 1 } else { 0 },
-      self.pulse1.sweep.shift_count
-    );
-    println!("4002: {:08b}", self.pulse1.timer & 0xFF);
-    println!(
-      "4003: {:05b}{:03b}",
-      self.pulse1.length_counter.length & 0x1F,
-      (self.pulse1.timer & 0x700) >> 8
-    );
-    println!("----------------");
+    // println!(
+    //   "4000: {:02b}{}{}{:04b}",
+    //   self.pulse1.duty,
+    //   if self.pulse1.length_counter_halt { 1 } else { 0 },
+    //   if self.pulse1.constant_volume { 1 } else { 0 },
+    //   self.pulse1.volume
+    // );
+    // println!(
+    //   "4001: {}{:03b}{}{:03b}",
+    //   if self.pulse1.sweep.enabled_flag { 1 } else { 0 },
+    //   self.pulse1.sweep.divider_period,
+    //   if self.pulse1.sweep.negate_flag { 1 } else { 0 },
+    //   self.pulse1.sweep.shift_count
+    // );
+    // println!("4002: {:08b}", self.pulse1.timer & 0xFF);
+    // println!(
+    //   "4003: {:05b}{:03b}",
+    //   self.pulse1.length_counter.length & 0x1F,
+    //   (self.pulse1.timer & 0x700) >> 8
+    // );
+    // println!("----------------");
   }
   pub fn read(&mut self, addr: u8) -> u8 {
     match addr {
