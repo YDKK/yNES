@@ -11,10 +11,9 @@
         "cwd": "${workspaceFolder}"
       },
       "args": [
-        "build",
-        "--package=y_nes"
+        "build"
       ],
-    "problemMatcher": [
+      "problemMatcher": [
         "$rustc"
       ]
     },
@@ -27,10 +26,9 @@
       },
       "args": [
         "build",
-        "--package=y_nes",
         "--release"
       ],
-    "problemMatcher": [
+      "problemMatcher": [
         "$rustc"
       ]
     }

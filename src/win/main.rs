@@ -3,7 +3,11 @@
 // under the MIT license.
 // The copyright of the original code snippets belongs to Microsoft Corporation.
 
+use sdl2::audio::{AudioQueue, AudioSpecDesired};
+use sdl2::*;
+
 use std::fs::File;
+use std::io::Read;
 use std::io::Write;
 
 use windows::{
@@ -11,8 +15,6 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::{Direct2D::Common::*, Direct2D::*, Direct3D::*, Direct3D11::*, Dxgi::Common::*, Dxgi::*, Gdi::*},
-        Media::Audio::XAudio2::*,
-        Media::Audio::*,
         System::{Com::*, LibraryLoader::*, Performance::*, SystemInformation::*},
         UI::{Controls::Dialogs::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
@@ -116,11 +118,10 @@ struct Window {
     target_fps: u16,
     start_time: i64,
     rendered_frames: u64,
-    xaudio2: IXAudio2,
-    mastering_voice: IXAudio2MasteringVoice,
-    source_voice: IXAudio2SourceVoice,
-    pcm_buffers: Box<[[f32; 3025]; 2]>,
-    pcm_buffer_i: usize,
+    pcm_buffers: Box<[f32; 3025]>,
+    sdl_context: Sdl,
+    audio_subsystem: AudioSubsystem,
+    audio_queue: AudioQueue<f32>,
 }
 
 impl Window {
@@ -135,7 +136,10 @@ impl Window {
         let mut frequency = 0;
         unsafe { QueryPerformanceFrequency(&mut frequency).ok()? };
 
-        let (xaudio2, mastering_voice, source_voice) = create_mastering_voice()?;
+        let sdl_context = sdl2::init().unwrap();
+        let audio_subsystem = sdl_context.audio().unwrap();
+        let desired_spec = AudioSpecDesired { freq: Some(178680), channels: Some(1), samples: Some(3025) };
+        let device = audio_subsystem.open_queue::<f32, _>(None, &desired_spec).unwrap();
 
         Ok(Window {
             handle: 0,
@@ -156,11 +160,10 @@ impl Window {
             target_fps: 60,
             start_time: 0,
             rendered_frames: 0,
-            xaudio2,
-            mastering_voice,
-            source_voice,
-            pcm_buffers: Box::new([[0.0; 3025]; 2]),
-            pcm_buffer_i: 0,
+            pcm_buffers: Box::new([0.0; 3025]),
+            sdl_context: sdl_context,
+            audio_subsystem: audio_subsystem,
+            audio_queue: device,
         })
     }
 
@@ -202,7 +205,7 @@ impl Window {
             debug_assert!(handle == self.handle);
             let mut message = MSG::default();
 
-            self.source_voice.Start(0, XAUDIO2_COMMIT_NOW)?;
+            self.audio_queue.resume();
 
             loop {
                 if self.visible {
@@ -271,54 +274,42 @@ impl Window {
                     SetWindowTextA(self.handle, window_title);
                 }
             }
-            let mut pcm_filled: usize = 0;
-            for _ in 0..std::cmp::min(need_render_frames, 5) {
-                let mut end_frame = false;
-                while end_frame != true {
-                    let result = nes.clock(&inputs);
-                    end_frame = result.0;
-                    let apu_out = result.1;
-                    if apu_out.is_some() {
-                        //とりあえず雑に間引く
-                        if self.test_audio_count % 10 == 0 {
-                            let pcm = apu_out.unwrap();
-                            if pcm_filled < 3025 {
-                                self.pcm_buffers[self.pcm_buffer_i][pcm_filled] = pcm;
-                                pcm_filled += 1;
+
+            if self.target_fps == 60 && self.audio_queue.size() > 2978 * 4 * 3 {
+                //バッファが十分なので何もしない
+                self.rendered_frames += need_render_frames;
+            } else {
+                let mut pcm_filled: usize = 0;
+                for _ in 0..std::cmp::min(need_render_frames, 5) {
+                    let mut end_frame = false;
+                    while end_frame != true {
+                        let result = nes.clock(&inputs);
+                        end_frame = result.0;
+                        let apu_out = result.1;
+                        if apu_out.is_some() {
+                            //とりあえず雑に間引く
+                            if self.test_audio_count % 10 == 0 {
+                                let pcm = apu_out.unwrap();
+                                if pcm_filled < 3025 {
+                                    self.pcm_buffers[pcm_filled] = pcm;
+                                    pcm_filled += 1;
+                                }
+                                if self.test_audio_out.is_some() {
+                                    let file = self.test_audio_out.as_mut().unwrap();
+                                    let pcm_bytes = pcm.to_be_bytes();
+                                    file.write_all(&pcm_bytes);
+                                }
                             }
-                            if self.test_audio_out.is_some() {
-                                let file = self.test_audio_out.as_mut().unwrap();
-                                let pcm_bytes = pcm.to_be_bytes();
-                                file.write_all(&pcm_bytes);
-                            }
+                            self.test_audio_count += 1;
+                            self.test_audio_count %= 10;
                         }
-                        self.test_audio_count += 1;
-                        self.test_audio_count %= 10;
                     }
                 }
-            }
-            self.rendered_frames += need_render_frames;
+                self.rendered_frames += need_render_frames;
 
-            if pcm_filled > 0 {
-                unsafe {
-                    let buffer_ptr: *mut u8 = &mut *(self.pcm_buffers[self.pcm_buffer_i].as_ptr() as *mut u8);
-                    let buffer = XAUDIO2_BUFFER {
-                        Flags: 0,
-                        AudioBytes: (pcm_filled * 4) as u32,
-                        pAudioData: buffer_ptr,
-                        PlayBegin: 0,
-                        PlayLength: 0,
-                        LoopBegin: 0,
-                        LoopLength: 0,
-                        LoopCount: 0,
-                        pContext: std::ptr::null_mut(),
-                    };
-                    self.source_voice.FlushSourceBuffers()?;
-                    self.source_voice
-                        .SubmitSourceBuffer(&buffer, std::ptr::null() as *const XAUDIO2_BUFFER_WMA)?;
+                if pcm_filled > 0 && self.audio_queue.size() <= 2978 * 4 * 3 {
+                    self.audio_queue.queue_audio(&self.pcm_buffers[0..pcm_filled]);
                 }
-                self.pcm_buffer_i += 1;
-                self.pcm_buffer_i %= 2;
             }
 
             let screen = nes.get_screen();
@@ -507,7 +498,17 @@ impl Window {
                         let file_path = std::ffi::CStr::from_ptr(buffer.as_ptr() as _).to_str().unwrap();
                         if file_path != "" {
                             println!("File selected: {}", file_path);
-                            self.nes = Some(Nes::new(file_path.to_string()).unwrap());
+                            let file = File::open(file_path);
+                            if file.is_err() {
+                                println!("open file error");
+                                return 0;
+                            }
+                            let mut contents = vec![];
+                            if file.unwrap().read_to_end(&mut contents).is_err() {
+                                println!("read file error");
+                                return 0;
+                            }
+                            self.nes = Some(Nes::new(contents.as_slice()).unwrap());
                         }
                         println!("current_dir: {:?}", std::env::current_dir());
                         //self.test_audio_out = Some(File::create("test_audio_out.pcm").unwrap());
@@ -728,47 +729,5 @@ fn get_time() -> Result<i64> {
         let mut time = 0;
         QueryPerformanceCounter(&mut time).ok()?;
         Ok(time)
-    }
-}
-
-fn create_mastering_voice() -> Result<(IXAudio2, IXAudio2MasteringVoice, IXAudio2SourceVoice)> {
-    unsafe {
-        let mut xaudio2: Option<IXAudio2> = None;
-        XAudio2CreateWithVersionInfo(&mut xaudio2 as *mut _, 0, XAUDIO2_DEFAULT_PROCESSOR, NTDDI_WIN10)?;
-
-        let mut mastering_voice: Option<IXAudio2MasteringVoice> = None;
-        xaudio2.as_ref().unwrap().CreateMasteringVoice(
-            &mut mastering_voice as *mut _,
-            1,
-            181500,
-            0,
-            None,
-            std::ptr::null(),
-            0,
-        )?;
-
-        let format: PCMWAVEFORMAT = PCMWAVEFORMAT {
-            wf: WAVEFORMAT {
-                wFormatTag: 0x0003, //WAVE_FORMAT_IEEE_FLOAT
-                nChannels: 1,
-                nSamplesPerSec: 181500,
-                nAvgBytesPerSec: 181500 * 4,
-                nBlockAlign: 4,
-            },
-            wBitsPerSample: 32,
-        };
-        let format_ex = std::mem::transmute::<&PCMWAVEFORMAT, &WAVEFORMATEX>(&format);
-
-        let mut source_voice: Option<IXAudio2SourceVoice> = None;
-        xaudio2.as_ref().unwrap().CreateSourceVoice(
-            &mut source_voice as *mut _,
-            format_ex,
-            0,
-            1.0,
-            None,
-            std::ptr::null(),
-            std::ptr::null(),
-        )?;
-        Ok((xaudio2.unwrap(), mastering_voice.unwrap(), source_voice.unwrap()))
     }
 }

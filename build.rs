@@ -1,6 +1,7 @@
+#[cfg(windows)]
 extern crate embed_resource;
 
-#[cfg(target_os = "windows")]
 fn main() {
+    #[cfg(windows)]
     embed_resource::compile("src/win/resource.rc");
 }
