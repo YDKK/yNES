@@ -275,10 +275,7 @@ impl Window {
                 }
             }
 
-            if self.target_fps == 60 && self.audio_queue.size() > 2978 * 4 * 3 {
-                //バッファが十分なので何もしない
-                self.rendered_frames += need_render_frames;
-            } else {
+            if self.target_fps != 60 || self.audio_queue.size() <= 2978 * 4 * 3 {
                 let mut pcm_filled: usize = 0;
                 for _ in 0..std::cmp::min(need_render_frames, 5) {
                     let mut end_frame = false;
@@ -305,12 +302,11 @@ impl Window {
                         }
                     }
                 }
-                self.rendered_frames += need_render_frames;
-
                 if pcm_filled > 0 && self.audio_queue.size() <= 2978 * 4 * 3 {
                     self.audio_queue.queue_audio(&self.pcm_buffers[0..pcm_filled]);
                 }
             }
+            self.rendered_frames += need_render_frames;
 
             let screen = nes.get_screen();
             for (index, pixel) in screen.iter().enumerate() {
