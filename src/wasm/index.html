@@ -75,10 +75,23 @@
       [0, 0, 0],
     ];
     let nes;
-    let frame;
     const canvas = document.querySelector("#canvas");
     const ctx = canvas.getContext('2d');
     const image = ctx.createImageData(256, 240);
+    let start_time;
+    const target_fps = 60;
+    const audio_buffer_length = 3025;
+    const audio_sample_rate = 178680;
+    let rendered_frames = 0;
+    let audio_count = 0;
+    let audioCtx;
+    let audioTempBuffer = new Array(audio_buffer_length);
+    let audioTime;
+    let totalPcmFilled = 0;
+
+    for (let i = 0; i < 256 * 240; i++) {
+      image.data[i * 4 + 3] = 255;//A
+    }
 
     import init, { nes_new, nes_clock, nes_get_screen, WasmPadInputs } from "./pkg/y_nes_wasm.js";
     init()
@@ -90,42 +103,91 @@
             const buffer = evt.target.result;
             const uint8Array = new Uint8Array(buffer);
             nes = nes_new(uint8Array);
-            frame = 0;
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            audioTime = audioCtx.currentTime;
+
+            rendered_frames = 0;
+            start_time = performance.now();
           };
           fileReader.readAsArrayBuffer(file);
         }, true);
       });
 
-    function clock(timestamp) {
-      if (nes != null) {
-        let end_frame = false;
-        while (!end_frame) {
-          const result = nes_clock(nes);
-          end_frame = result.end_frame;
-          result.free();
-        }
-        const screen = nes_get_screen(nes);
-        for (let i = 0; i < 256 * 240; i++) {
-          const pixel = colors[screen[i]];
-          image.data[i * 4 + 0] = pixel[0];//R
-          image.data[i * 4 + 1] = pixel[1];//G
-          image.data[i * 4 + 2] = pixel[2];//B
-          image.data[i * 4 + 3] = 255;//A
-        }
-        ctx.putImageData(image, 0, 0);
-
-        frame++;
-        document.querySelector("#frame").textContent = frame;
+    function render(current_time) {
+      if (nes == null) {
+        window.requestAnimationFrame(render);
+        return;
       }
-      window.requestAnimationFrame(clock);
+
+      let time_diff = (current_time - start_time) / 1000;
+      let current_frames = Math.floor(time_diff * target_fps);
+      let need_render_frames = current_frames - rendered_frames;
+      let overload_frames = Math.max(need_render_frames - 5, 0);
+
+      //TODO: AudioWorkletに置き換え？
+      if (target_fps != 60 || (((audioTime - audioCtx.getOutputTimestamp().contextTime) * audio_sample_rate) <= audio_buffer_length * 2)) {
+        console.log(((audioTime - audioCtx.getOutputTimestamp().contextTime) * audio_sample_rate));
+        let pcm_filled = 0;
+        for (let _ = 0; _ < Math.min(need_render_frames, 5); _++) {
+          let end_frame = false;
+          while (!end_frame) {
+            const result = nes_clock(nes);
+            end_frame = result.end_frame;
+            let apu_out = result.apu_out;
+            if (apu_out != undefined) {
+              //とりあえず雑に間引く
+              if (audio_count % 10 == 0) {
+                if (pcm_filled < audio_buffer_length) {
+                  audioTempBuffer[pcm_filled] = apu_out;
+                  pcm_filled++;
+                }
+              }
+              audio_count += 1;
+              audio_count %= 10;
+            }
+            result.free();
+          }
+        }
+        if (pcm_filled > 0) {
+          let source = audioCtx.createBufferSource();
+          let audioBuffer = audioCtx.createBuffer(1, pcm_filled, audio_sample_rate);
+          var buffer = audioBuffer.getChannelData(0);
+
+          for (let i = 0; i < pcm_filled; i++) {
+            buffer[i] = audioTempBuffer[i];
+          }
+
+          source.buffer = audioBuffer;
+          source.connect(audioCtx.destination);
+          source.start(audioTime);
+          totalPcmFilled += pcm_filled;
+          audioTime = totalPcmFilled / audio_sample_rate;
+        }
+      }
+      rendered_frames += need_render_frames;
+
+      const screen = nes_get_screen(nes);
+      for (let i = 0; i < 256 * 240; i++) {
+        const pixel = colors[screen[i]];
+        image.data[i * 4 + 0] = pixel[0];//R
+        image.data[i * 4 + 1] = pixel[1];//G
+        image.data[i * 4 + 2] = pixel[2];//B
+      }
+      ctx.putImageData(image, 0, 0);
+      document.querySelector("#frame").textContent = rendered_frames;
+      if (overload_frames != 0) {
+        document.querySelector("#load").textContent = " [overload!]";
+      }
+
+      window.requestAnimationFrame(render);
     }
 
-    window.requestAnimationFrame(clock);
+    window.requestAnimationFrame(render);
   </script>
   <h1 style="font-size: 1.5rem;">yNes for Browser</h1>
   <canvas id="canvas" width="256" height="240"></canvas><br>
   <input type="file" id="rom" accept=".nes"><br>
-  Frame: <span id="frame"></span>
+  Frame: <span id="frame"></span><span id="load"></span>
 </body>
 
 </html>
