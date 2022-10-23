@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en-US">
+
+<head>
+  <meta charset="utf-8">
+  <title>y_nes_wasm</title>
+</head>
+
+<body>
+  <script type="module">
+    const colors = [
+      [84, 84, 84],
+      [0, 30, 116],
+      [8, 16, 144],
+      [48, 0, 136],
+      [68, 0, 100],
+      [92, 0, 48],
+      [84, 4, 0],
+      [60, 24, 0],
+      [32, 42, 0],
+      [8, 58, 0],
+      [0, 64, 0],
+      [0, 60, 0],
+      [0, 50, 60],
+      [0, 0, 0],
+      [0, 0, 0],
+      [0, 0, 0],
+      [152, 150, 152],
+      [8, 76, 196],
+      [48, 50, 236],
+      [92, 30, 228],
+      [136, 20, 176],
+      [160, 20, 100],
+      [152, 34, 32],
+      [120, 60, 0],
+      [84, 90, 0],
+      [40, 114, 0],
+      [8, 124, 0],
+      [0, 118, 40],
+      [0, 102, 120],
+      [0, 0, 0],
+      [0, 0, 0],
+      [0, 0, 0],
+      [236, 238, 236],
+      [76, 154, 236],
+      [120, 124, 236],
+      [176, 98, 236],
+      [228, 84, 236],
+      [236, 88, 180],
+      [236, 106, 100],
+      [212, 136, 32],
+      [160, 170, 0],
+      [116, 196, 0],
+      [76, 208, 32],
+      [56, 204, 108],
+      [56, 180, 204],
+      [60, 60, 60],
+      [0, 0, 0],
+      [0, 0, 0],
+      [236, 238, 236],
+      [168, 204, 236],
+      [188, 188, 236],
+      [212, 178, 236],
+      [236, 174, 236],
+      [236, 174, 212],
+      [236, 180, 176],
+      [228, 196, 144],
+      [204, 210, 120],
+      [180, 222, 120],
+      [168, 226, 144],
+      [152, 226, 180],
+      [160, 214, 228],
+      [160, 162, 160],
+      [0, 0, 0],
+      [0, 0, 0],
+    ];
+    let nes;
+    let frame;
+    const canvas = document.querySelector("#canvas");
+    const ctx = canvas.getContext('2d');
+    const image = ctx.createImageData(256, 240);
+
+    import init, { nes_new, nes_clock, nes_get_screen, WasmPadInputs } from "./pkg/y_nes_wasm.js";
+    init()
+      .then(() => {
+        document.querySelector("#rom").addEventListener('change', function (e) {
+          const file = document.querySelector('#rom').files[0];
+          const fileReader = new FileReader();
+          fileReader.onload = function webViewerChangeFileReaderOnload(evt) {
+            const buffer = evt.target.result;
+            const uint8Array = new Uint8Array(buffer);
+            nes = nes_new(uint8Array);
+            frame = 0;
+          };
+          fileReader.readAsArrayBuffer(file);
+        }, true);
+      });
+
+    function clock(timestamp) {
+      if (nes != null) {
+        let end_frame = false;
+        while (!end_frame) {
+          const result = nes_clock(nes);
+          end_frame = result.end_frame;
+          result.free();
+        }
+        const screen = nes_get_screen(nes);
+        for (let i = 0; i < 256 * 240; i++) {
+          const pixel = colors[screen[i]];
+          image.data[i * 4 + 0] = pixel[0];//R
+          image.data[i * 4 + 1] = pixel[1];//G
+          image.data[i * 4 + 2] = pixel[2];//B
+          image.data[i * 4 + 3] = 255;//A
+        }
+        ctx.putImageData(image, 0, 0);
+
+        frame++;
+        document.querySelector("#frame").textContent = frame;
+      }
+      window.requestAnimationFrame(clock);
+    }
+
+    window.requestAnimationFrame(clock);
+  </script>
+  <h1 style="font-size: 1.5rem;">yNes for Browser</h1>
+  <canvas id="canvas" width="256" height="240"></canvas><br>
+  <input type="file" id="rom" accept=".nes"><br>
+  Frame: <span id="frame"></span>
+</body>
+
+</html>

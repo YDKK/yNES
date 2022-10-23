@@ -1,1 +1,2 @@
-/target
+src/win/target
+src/wasm/target

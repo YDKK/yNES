@@ -1,8 +1,3 @@
-// This code contains code snippets obtained from
-// https://github.com/microsoft/windows-samples-rs/blob/master/direct2d/src/main.rs
-// under the MIT license.
-// The copyright of the original code snippets belongs to Microsoft Corporation.
-
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::*;
 

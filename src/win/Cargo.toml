@@ -1,27 +1,18 @@
 [package]
-name = "y_nes"
+name = "y_nes_win"
 version = "0.1.0"
 authors = ["YDKK <YDKK@users.noreply.github.com>"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-build = "build.rs"
-
-[lib]
-name = "y_nes"
-path = "src/common/lib.rs"
+build = "src/build.rs"
 
 [[bin]]
 name = "y_nes_win"
-path = "src/win/main.rs"
+path = "src/main.rs"
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "1.6"
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-js-sys = "0.3"
-web-sys = "0.3"
 
 [target.'cfg(windows)'.dependencies.sdl2]
 version = "0.35"
@@ -56,3 +47,6 @@ features = [
 [profile.release]
 lto = true
 codegen-units = 1
+
+[dependencies.y_nes]
+path = "../common"

@@ -1,0 +1,9 @@
+[package]
+name = "y_nes"
+version = "0.1.0"
+authors = ["YDKK <YDKK@users.noreply.github.com>"]
+edition = "2021"
+
+[lib]
+name = "y_nes"
+path = "lib.rs"
