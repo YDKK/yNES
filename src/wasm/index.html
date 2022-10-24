@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="utf-8">
-  <title>y_nes_wasm</title>
+  <title>yNES for Browser</title>
 </head>
 
 <body>
@@ -153,7 +153,7 @@
           }
         }
         if (pcm_filled > 0) {
-          audioprocessornode.port.postMessage({ pcm_filled, audioBufferFloat32 });
+          audioProcessorNode.port.postMessage({ pcm_filled, audioBufferFloat32 });
         }
       }
       rendered_frames += need_render_frames;
@@ -176,7 +176,7 @@
 
     window.requestAnimationFrame(render);
   </script>
-  <h1 style="font-size: 1.5rem;">yNes for Browser</h1>
+  <h1 style="font-size: 1.5rem;">yNES for Browser</h1>
   <canvas id="canvas" width="256" height="240"></canvas><br>
   <input type="file" id="rom" accept=".nes"><br>
   Frame: <span id="frame"></span><span id="load"></span>
