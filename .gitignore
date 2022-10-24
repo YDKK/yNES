@@ -1,2 +1,3 @@
 src/win/target
 src/wasm/target
+src/common/target

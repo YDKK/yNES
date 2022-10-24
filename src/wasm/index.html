@@ -85,9 +85,10 @@
     let rendered_frames = 0;
     let audio_count = 0;
     let audioCtx;
-    let audioTempBuffer = new Array(audio_buffer_length);
-    let audioTime;
-    let totalPcmFilled = 0;
+    let audioProcessorNode;
+    let audioProcessorBufferLength = 0;
+    const audioBuffer = new ArrayBuffer(audio_buffer_length * 4);
+    const audioBufferFloat32 = new Float32Array(audioBuffer);
 
     for (let i = 0; i < 256 * 240; i++) {
       image.data[i * 4 + 3] = 255;//A
@@ -99,12 +100,17 @@
         document.querySelector("#rom").addEventListener('change', function (e) {
           const file = document.querySelector('#rom').files[0];
           const fileReader = new FileReader();
-          fileReader.onload = function webViewerChangeFileReaderOnload(evt) {
+          fileReader.onload = async function webViewerChangeFileReaderOnload(evt) {
             const buffer = evt.target.result;
             const uint8Array = new Uint8Array(buffer);
             nes = nes_new(uint8Array);
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            audioTime = audioCtx.currentTime;
+            await audioCtx.audioWorklet.addModule("audio-processor.js");
+            audioProcessorNode = new AudioWorkletNode(audioCtx, "audio-processor");
+            audioProcessorNode.port.onmessage = (e) => {
+              audioProcessorBufferLength = e.data;
+            };
+            audioProcessorNode.connect(audioCtx.destination);
 
             rendered_frames = 0;
             start_time = performance.now();
@@ -124,9 +130,7 @@
       let need_render_frames = current_frames - rendered_frames;
       let overload_frames = Math.max(need_render_frames - 5, 0);
 
-      //TODO: AudioWorkletに置き換え？
-      if (target_fps != 60 || (((audioTime - audioCtx.getOutputTimestamp().contextTime) * audio_sample_rate) <= audio_buffer_length * 2)) {
-        console.log(((audioTime - audioCtx.getOutputTimestamp().contextTime) * audio_sample_rate));
+      if (target_fps != 60 || (audioProcessorBufferLength <= audio_buffer_length * 2)) {
         let pcm_filled = 0;
         for (let _ = 0; _ < Math.min(need_render_frames, 5); _++) {
           let end_frame = false;
@@ -138,7 +142,7 @@
               //とりあえず雑に間引く
               if (audio_count % 10 == 0) {
                 if (pcm_filled < audio_buffer_length) {
-                  audioTempBuffer[pcm_filled] = apu_out;
+                  audioBufferFloat32[pcm_filled] = apu_out;
                   pcm_filled++;
                 }
               }
@@ -149,19 +153,7 @@
           }
         }
         if (pcm_filled > 0) {
-          let source = audioCtx.createBufferSource();
-          let audioBuffer = audioCtx.createBuffer(1, pcm_filled, audio_sample_rate);
-          var buffer = audioBuffer.getChannelData(0);
-
-          for (let i = 0; i < pcm_filled; i++) {
-            buffer[i] = audioTempBuffer[i];
-          }
-
-          source.buffer = audioBuffer;
-          source.connect(audioCtx.destination);
-          source.start(audioTime);
-          totalPcmFilled += pcm_filled;
-          audioTime = totalPcmFilled / audio_sample_rate;
+          audioprocessornode.port.postMessage({ pcm_filled, audioBufferFloat32 });
         }
       }
       rendered_frames += need_render_frames;
