@@ -233,11 +233,11 @@ dependencies = [
 
 [[package]]
 name = "y_nes"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "y_nes_win"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "embed-resource",
  "sdl2",
