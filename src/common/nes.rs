@@ -32,6 +32,9 @@ impl std::default::Default for PadInput {
 }
 
 impl Nes {
+  pub fn get_version() -> String {
+    env!("CARGO_PKG_VERSION").into()
+  }
   pub fn new(rom: &[u8]) -> Result<Self, String> {
     let rom = Rom::load(rom)?;
     let nes = Nes { cpu: Cpu::new(), ppu: Ppu::new(rom.vertical_mirroring), rom, clock_count: 0, apu: Apu::new() };

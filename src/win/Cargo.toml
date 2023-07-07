@@ -1,6 +1,6 @@
 [package]
 name = "y_nes_win"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["YDKK <YDKK@users.noreply.github.com>"]
 edition = "2021"
 
@@ -19,7 +19,7 @@ version = "0.35"
 features = ["bundled"]
 
 [target.'cfg(windows)'.dependencies.windows]
-version = "0.29"
+version = "0.48"
 features = [
     "Foundation_Numerics",
     "Win32_System_Com",

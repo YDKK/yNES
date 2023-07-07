@@ -4,19 +4,20 @@ use sdl2::*;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
+use std::mem::ManuallyDrop;
 
 use windows::{
     core::*,
     Win32::{
         Foundation::*,
         Graphics::{Direct2D::Common::*, Direct2D::*, Direct3D::*, Direct3D11::*, Dxgi::Common::*, Dxgi::*, Gdi::*},
-        System::{Com::*, LibraryLoader::*, Performance::*, SystemInformation::*},
+        System::{Com::*, LibraryLoader::*, Performance::*},
         UI::{Controls::Dialogs::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
 };
 use y_nes::nes::*;
 
-const colors: [[u8; 3]; 64] = [
+const COLORS: [[u8; 3]; 64] = [
     [84, 84, 84],
     [0, 30, 116],
     [8, 16, 144],
@@ -83,12 +84,12 @@ const colors: [[u8; 3]; 64] = [
     [0, 0, 0],
 ];
 
-const window_title: PSTR = PSTR(b"yNES for Windows\0".as_ptr() as _);
-const window_title_overload: PSTR = PSTR(b"yNES for Windows - [overload!]\0".as_ptr() as _);
+const WINDOW_TITLE: PCSTR = PCSTR(b"yNES for Windows\0".as_ptr() as _);
+const WINDOW_TITLE_OVERLOAD: PCSTR = PCSTR(b"yNES for Windows - [overload!]\0".as_ptr() as _);
 
 fn main() -> Result<()> {
     unsafe {
-        CoInitializeEx(std::ptr::null_mut(), COINIT_MULTITHREADED)?;
+        CoInitializeEx(None, COINIT_MULTITHREADED)?;
     }
     let mut window = Window::new()?;
     window.run()
@@ -137,7 +138,7 @@ impl Window {
         let device = audio_subsystem.open_queue::<f32, _>(None, &desired_spec).unwrap();
 
         Ok(Window {
-            handle: 0,
+            handle: HWND(0),
             factory,
             dxfactory,
 
@@ -164,13 +165,12 @@ impl Window {
 
     fn run(&mut self) -> Result<()> {
         unsafe {
-            let instance = GetModuleHandleA(None);
-            debug_assert!(instance != 0);
+            let instance = GetModuleHandleA(None).unwrap();
 
             let wc = WNDCLASSA {
                 hInstance: instance,
-                lpszClassName: PSTR(b"window\0".as_ptr() as _),
-                lpszMenuName: PSTR(b"menu\0".as_ptr() as _),
+                lpszClassName: PCSTR(b"window\0".as_ptr() as _),
+                lpszMenuName: PCSTR(b"menu\0".as_ptr() as _),
                 style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(Self::wndproc),
                 ..Default::default()
@@ -181,8 +181,8 @@ impl Window {
 
             let handle = CreateWindowExA(
                 Default::default(),
-                PSTR(b"window\0".as_ptr() as _),
-                window_title,
+                PCSTR(b"window\0".as_ptr() as _),
+                WINDOW_TITLE,
                 WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -191,12 +191,12 @@ impl Window {
                 None,
                 None,
                 instance,
-                self as *mut _ as _,
+                Some(self as *mut _ as _),
             );
 
             self.set_window_size(2);
 
-            debug_assert!(handle != 0);
+            debug_assert!(handle != HWND(0));
             debug_assert!(handle == self.handle);
             let mut message = MSG::default();
 
@@ -246,12 +246,12 @@ impl Window {
                 input = PadInput {
                     a: GetKeyState('X' as i32) < 0,
                     b: GetKeyState('Z' as i32) < 0,
-                    select: GetKeyState(VK_ESCAPE.into()) < 0,
-                    start: GetKeyState(VK_RETURN.into()) < 0,
-                    up: GetKeyState(VK_UP.into()) < 0,
-                    down: GetKeyState(VK_DOWN.into()) < 0,
-                    left: GetKeyState(VK_LEFT.into()) < 0,
-                    right: GetKeyState(VK_RIGHT.into()) < 0,
+                    select: GetKeyState(VK_ESCAPE.0.into()) < 0,
+                    start: GetKeyState(VK_RETURN.0.into()) < 0,
+                    up: GetKeyState(VK_UP.0.into()) < 0,
+                    down: GetKeyState(VK_DOWN.0.into()) < 0,
+                    left: GetKeyState(VK_LEFT.0.into()) < 0,
+                    right: GetKeyState(VK_RIGHT.0.into()) < 0,
                 };
             }
             let inputs = PadInputs { pad1: input, pad2: Default::default() };
@@ -264,9 +264,9 @@ impl Window {
             let overload_frames = need_render_frames.saturating_sub(5);
             unsafe {
                 if overload_frames > 0 {
-                    SetWindowTextA(self.handle, window_title_overload);
+                    SetWindowTextA(self.handle, WINDOW_TITLE_OVERLOAD);
                 } else {
-                    SetWindowTextA(self.handle, window_title);
+                    SetWindowTextA(self.handle, WINDOW_TITLE);
                 }
             }
 
@@ -306,7 +306,7 @@ impl Window {
             let screen = nes.get_screen();
             for (index, pixel) in screen.iter().enumerate() {
                 let index = index * 4;
-                let color = colors[*pixel as usize];
+                let color = COLORS[*pixel as usize];
                 self.frame_buffer[index] = color[2]; //B
                 self.frame_buffer[index + 1] = color[1]; //G
                 self.frame_buffer[index + 2] = color[0]; //R
@@ -317,7 +317,7 @@ impl Window {
             self.draw()?;
             unsafe {
                 let target = self.target.as_ref().unwrap();
-                target.EndDraw(std::ptr::null_mut(), std::ptr::null_mut())?;
+                target.EndDraw(None, None)?;
             }
         }
 
@@ -344,14 +344,14 @@ impl Window {
     }
 
     fn present(&self, sync: u32, flags: u32) -> Result<()> {
-        unsafe { self.swapchain.as_ref().unwrap().Present(sync, flags) }
+        unsafe { self.swapchain.as_ref().unwrap().Present(sync, flags).ok() }
     }
 
     fn draw(&mut self) -> Result<()> {
         unsafe {
             {
                 let target = self.target.as_ref().unwrap();
-                target.Clear(&D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
+                target.Clear(Some(&D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }));
             }
 
             self.draw_canvas()?;
@@ -377,10 +377,10 @@ impl Window {
             };
             target.DrawBitmap(
                 canvas,
-                &rect,
+                Some(&rect),
                 1.0,
                 D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
-                std::ptr::null(),
+                None,
             );
         }
 
@@ -389,13 +389,7 @@ impl Window {
 
     fn draw_canvas(&mut self) -> Result<()> {
         let canvas = self.canvas.as_ref().unwrap();
-        unsafe {
-            canvas.CopyFromMemory(
-                std::ptr::null(),
-                self.frame_buffer.as_ptr() as *const std::ffi::c_void,
-                256 * 4,
-            )
-        }
+        unsafe { canvas.CopyFromMemory(None, self.frame_buffer.as_ptr() as *const std::ffi::c_void, 256 * 4) }
     }
 
     fn create_device_size_resources(&mut self) -> Result<()> {
@@ -414,10 +408,10 @@ impl Window {
             dpiX: self.dpi,
             dpiY: self.dpi,
             bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET,
-            colorContext: None,
+            colorContext: ManuallyDrop::new(None),
         };
 
-        unsafe { target.CreateBitmap2(size, std::ptr::null(), 256 * 4, &properties) }
+        unsafe { target.CreateBitmap2(size, None, 256 * 4, &properties) }
     }
 
     fn resize_swapchain_bitmap(&mut self) -> Result<()> {
@@ -446,17 +440,17 @@ impl Window {
                     BeginPaint(self.handle, &mut ps);
                     self.render().unwrap();
                     EndPaint(self.handle, &ps);
-                    0
+                    LRESULT(0)
                 }
                 WM_SIZE => {
-                    if wparam != SIZE_MINIMIZED as usize {
+                    if wparam.0 != SIZE_MINIMIZED as usize {
                         self.resize_swapchain_bitmap().unwrap();
                     }
-                    0
+                    LRESULT(0)
                 }
                 WM_DISPLAYCHANGE => {
                     self.render().unwrap();
-                    0
+                    LRESULT(0)
                 }
                 WM_USER => {
                     if self.present(0, DXGI_PRESENT_TEST).is_ok() {
@@ -464,23 +458,23 @@ impl Window {
                         self.occlusion = 0;
                         self.visible = true;
                     }
-                    0
+                    LRESULT(0)
                 }
                 WM_ACTIVATE => {
                     self.visible = true; // TODO: unpack !HIWORD(wparam);
-                    0
+                    LRESULT(0)
                 }
                 WM_DESTROY => {
                     PostQuitMessage(0);
-                    0
+                    LRESULT(0)
                 }
-                WM_COMMAND => match wparam as u16 {
+                WM_COMMAND => match wparam.0 as u16 {
                     100 => {
                         let mut buffer: [u8; 1024] = [0; 1024];
                         let mut file = OPENFILENAMEA {
                             lStructSize: std::mem::size_of::<OPENFILENAMEA>() as _,
                             hwndOwner: self.handle,
-                            lpstrFilter: PSTR(b"iNES file (*.nes)\0*.nes\0\0".as_ptr() as _),
+                            lpstrFilter: PCSTR(b"iNES file (*.nes)\0*.nes\0\0".as_ptr() as _),
                             lpstrFile: PSTR(&mut buffer[0]),
                             nMaxFile: 1024,
                             ..Default::default()
@@ -492,20 +486,18 @@ impl Window {
                             let file = File::open(file_path);
                             if file.is_err() {
                                 println!("open file error");
-                                return 0;
+                                return LRESULT(0);
                             }
                             let mut contents = vec![];
                             if file.unwrap().read_to_end(&mut contents).is_err() {
                                 println!("read file error");
-                                return 0;
+                                return LRESULT(0);
                             }
                             self.nes = Some(Nes::new(contents.as_slice()).unwrap());
                         }
-                        println!("current_dir: {:?}", std::env::current_dir());
-                        //self.test_audio_out = Some(File::create("test_audio_out.pcm").unwrap());
                         self.start_time = get_time().unwrap();
                         self.rendered_frames = 0;
-                        0
+                        LRESULT(0)
                     }
                     param @ 200..=299 => {
                         match param {
@@ -516,7 +508,7 @@ impl Window {
                             204 => self.set_window_size(5),
                             _ => panic!(),
                         };
-                        0
+                        LRESULT(0)
                     }
                     param @ 300..=399 => {
                         match param {
@@ -529,9 +521,12 @@ impl Window {
                         };
                         self.start_time = get_time().unwrap();
                         self.rendered_frames = 0;
-                        0
+                        LRESULT(0)
                     }
-                    60000 => todo!(),
+                    60000 => {
+                        self.open_about_window();
+                        LRESULT(0)
+                    }
                     _ => DefWindowProcA(self.handle, message, wparam, lparam),
                 },
                 _ => DefWindowProcA(self.handle, message, wparam, lparam),
@@ -564,7 +559,7 @@ impl Window {
     extern "system" fn wndproc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         unsafe {
             if message == WM_NCCREATE {
-                let cs = lparam as *const CREATESTRUCTA;
+                let cs = lparam.0 as *const CREATESTRUCTA;
                 let this = (*cs).lpCreateParams as *mut Self;
                 (*this).handle = window;
 
@@ -580,6 +575,24 @@ impl Window {
             DefWindowProcA(window, message, wparam, lparam)
         }
     }
+
+    fn open_about_window(&self) {
+        unsafe {
+            MessageBoxA(
+                self.handle,
+                PCSTR(
+                    format!(
+                        "yNES for Windows by YDKK\n\nEmulator Core: v{}\nWindows Frontend: v{}\n\nhttps://github.com/YDKK/yNES\0",
+                        Nes::get_version(),
+                        env!("CARGO_PKG_VERSION")
+                    )
+                    .as_ptr() as _,
+                ),
+                PCSTR("yNES for Windows\0".as_ptr() as _),
+                MB_OK,
+            );
+        }
+    }
 }
 
 fn create_factory() -> Result<ID2D1Factory1> {
@@ -589,17 +602,7 @@ fn create_factory() -> Result<ID2D1Factory1> {
         options.debugLevel = D2D1_DEBUG_LEVEL_INFORMATION;
     }
 
-    let mut result = None;
-
-    unsafe {
-        D2D1CreateFactory(
-            D2D1_FACTORY_TYPE_SINGLE_THREADED,
-            &ID2D1Factory1::IID,
-            &options,
-            std::mem::transmute(&mut result),
-        )
-        .map(|()| result.unwrap())
-    }
+    unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(&options)) }
 }
 
 fn create_device() -> Result<ID3D11Device> {
@@ -627,14 +630,13 @@ fn create_device_with_type(drive_type: D3D_DRIVER_TYPE) -> Result<ID3D11Device> 
         D3D11CreateDevice(
             None,
             drive_type,
-            HINSTANCE::default(),
+            None,
             flags,
-            std::ptr::null(),
-            0,
+            None,
             D3D11_SDK_VERSION,
-            &mut device,
-            std::ptr::null_mut(),
-            &mut None,
+            Some(&mut device),
+            None,
+            None,
         )
         .map(|()| device.unwrap())
     }
@@ -642,7 +644,7 @@ fn create_device_with_type(drive_type: D3D_DRIVER_TYPE) -> Result<ID3D11Device> 
 
 fn create_render_target(factory: &ID2D1Factory1, device: &ID3D11Device) -> Result<ID2D1DeviceContext> {
     unsafe {
-        let d2device = factory.CreateDevice(device.cast::<IDXGIDevice>()?)?;
+        let d2device = factory.CreateDevice(&device.cast::<IDXGIDevice>()?)?;
 
         let target = d2device.CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?;
 
@@ -664,7 +666,7 @@ fn create_swapchain(device: &ID3D11Device, window: HWND) -> Result<IDXGISwapChai
         ..Default::default()
     };
 
-    unsafe { factory.CreateSwapChainForHwnd(device, window, &props, std::ptr::null(), None) }
+    unsafe { factory.CreateSwapChainForHwnd(device, window, &props, None, None) }
 }
 
 fn get_dxgi_factory(device: &ID3D11Device) -> Result<IDXGIFactory2> {
@@ -680,12 +682,12 @@ fn create_swapchain_bitmap(swapchain: &IDXGISwapChain1, target: &ID2D1DeviceCont
         dpiX: 96.0,
         dpiY: 96.0,
         bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-        colorContext: None,
+        ..Default::default()
     };
 
     unsafe {
-        let bitmap = target.CreateBitmapFromDxgiSurface(&surface, &props)?;
-        target.SetTarget(bitmap);
+        let bitmap = target.CreateBitmapFromDxgiSurface(&surface, Some(&props))?;
+        target.SetTarget(&bitmap);
     };
 
     Ok(())
