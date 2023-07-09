@@ -11,6 +11,10 @@ Rust製ファミコンエミュレータ
 |![image](https://github.com/YDKK/yNES/assets/3415240/be6a7e97-f0fb-476a-a473-f4fd5f73d4ef)|![capture](https://github.com/YDKK/yNES/assets/3415240/47a0ca36-23f9-46cb-9012-76423169eb7f)|
 ||[YouTube (with audio)](https://www.youtube.com/watch?v=1uFGKheUacY)|
 
+### Browser
+
+https://ydkk.github.io/yNES/
+
 ## Implementation
 
 ### Emulator Core
