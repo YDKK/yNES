@@ -9,6 +9,7 @@ pub struct Nes {
   rom: Rom,
   clock_count: u8,
   apu: Apu,
+  last_nmi: bool,
 }
 
 pub struct PadInputs {
@@ -37,7 +38,14 @@ impl Nes {
   }
   pub fn new(rom: &[u8]) -> Result<Self, String> {
     let rom = Rom::load(rom)?;
-    let nes = Nes { cpu: Cpu::new(), ppu: Ppu::new(rom.vertical_mirroring), rom, clock_count: 0, apu: Apu::new() };
+    let nes = Nes {
+      cpu: Cpu::new(),
+      ppu: Ppu::new(rom.vertical_mirroring),
+      rom,
+      clock_count: 0,
+      apu: Apu::new(),
+      last_nmi: false,
+    };
 
     Ok(nes)
   }
@@ -51,9 +59,10 @@ impl Nes {
     }
 
     let (end_frame, nmi) = self.ppu.clock(&self.rom);
-    if nmi {
+    if nmi && nmi != self.last_nmi {
       self.cpu.nmi();
     }
+    self.last_nmi = nmi;
 
     self.clock_count += 1;
     self.clock_count %= 3;

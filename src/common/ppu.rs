@@ -8,10 +8,6 @@ struct VRam {
   attribute_table_0: Box<[u8; 0x40]>,
   name_table_1: Box<[u8; 0x3C0]>,
   attribute_table_1: Box<[u8; 0x40]>,
-  // name_table_2: Box<[u8; 0x3C0]>,
-  // attribute_table_2: Box<[u8; 0x40]>,
-  // name_table_3: Box<[u8; 0x3C0]>,
-  // attribute_table_3: Box<[u8; 0x40]>,
   background_palette: Box<[u8; 0x10]>,
   sprite_palette: Box<[u8; 0x10]>,
   sprite_memory: Box<[u8; 0x100]>,
@@ -65,9 +61,9 @@ impl VRam {
       0x2C00..=0x2FBF => self.name_table_1[addr - 0x2C00],
       0x2FC0..=0x2FFF => self.attribute_table_1[addr - 0x2FC0],
       0x3000..=0x3EFF => self.read(rom, (addr - 0x1000) as u16),
-      0x3F04 | 0x3F08 | 0x3F0C => self.background_palette[0],
+      0x3F00 | 0x3F04 | 0x3F08 | 0x3F0C => self.background_palette[0],
       0x3F00..=0x3F0F => self.background_palette[addr - 0x3F00],
-      0x3F10 | 0x3F14 | 0x3F18 | 0x3F1C => self.background_palette[0],
+      0x3F10 | 0x3F14 | 0x3F18 | 0x3F1C => self.read(rom, (addr - 0x10) as u16),
       0x3F10..=0x3F1F => self.sprite_palette[addr - 0x3F10],
       0x3F20..=0x3FFF => self.read(rom, (addr - 0x0020) as u16),
       _ => self.read(rom, (addr - 0x4000) as u16),
@@ -115,7 +111,7 @@ impl VRam {
       }
       0x3000..=0x3EFF => self.write((addr - 0x1000) as u16, value),
       0x3F00..=0x3F0F => self.background_palette[addr - 0x3F00] = value,
-      0x3F10 | 0x3F14 | 0x3F18 | 0x3F1C => self.background_palette[0] = value,
+      0x3F10 | 0x3F14 | 0x3F18 | 0x3F1C => self.write((addr - 0x10) as u16, value),
       0x3F10..=0x3F1F => self.sprite_palette[addr - 0x3F10] = value,
       0x3F20..=0x3FFF => self.write((addr - 0x0020) as u16, value),
       _ => self.write((addr - 0x4000) as u16, value),
@@ -495,17 +491,22 @@ impl Ppu {
       240 => {} //post-render
       241 => {
         //Vblank
-        if self.current_x == 0 {
+        if self.current_x == 1 {
           self.registers.status_register.v_blank = true;
-          nmi = self.registers.control_register.nmi_on_v_blank;
         }
+        nmi = self.registers.control_register.nmi_on_v_blank && self.registers.status_register.v_blank;
       }
-      242..=260 => {} //Vblank
+      242..=260 => {
+        //Vblank
+        nmi = self.registers.control_register.nmi_on_v_blank && self.registers.status_register.v_blank;
+      } 
       261 => {
-        if self.current_x == 0 {
+        //pre-render scanline
+        if self.current_x == 1 {
           self.registers.status_register.sprite_0_hit = false;
+          self.registers.status_register.v_blank = false;
         }
-      } //pre-render scanline
+      } 
       _ => panic!(),
     }
     self.current_x += 1;
@@ -538,6 +539,7 @@ impl Ppu {
         self.read_buffer = self.bus.v_ram.read(rom, addr);
         if (0x3F00..=0x3FFF).contains(&addr) {
           result = self.read_buffer;
+          self.read_buffer = self.bus.v_ram.read(rom, addr - 0x1000);
         }
         addr = addr.wrapping_add(if self.registers.control_register.v_ram_io_addressing {
           32
