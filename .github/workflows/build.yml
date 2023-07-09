@@ -25,4 +25,6 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
     - name: install wasm-pack
       run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-    - run: wasm-pack build --release --target web
+    - name: Build wasm
+      working-directory: ./src/wasm
+      run: wasm-pack build --release --target web
