@@ -7,8 +7,10 @@
 </head>
 
 <body>
+  <script src="coi-serviceworker.min.js"></script>
   <script type="module">
-    const colors = [
+    const VERSION = "0.1.0";
+    const COLORS = [ //RGB
       [84, 84, 84],
       [0, 30, 116],
       [8, 16, 144],
@@ -74,101 +76,207 @@
       [0, 0, 0],
       [0, 0, 0],
     ];
+    const PAD_BUTTONS = { //XYWH
+      a: [220, 65, 30, 30, "A"],
+      b: [180, 65, 30, 30, "B"],
+      select: [100, 75, 30, 20, "SELECT"],
+      start: [135, 75, 30, 20, "START"],
+      up: [35, 20, 25, 25, "⬆️"],
+      down: [35, 70, 25, 25, "⬇️"],
+      left: [10, 45, 25, 25, "⬅️"],
+      right: [60, 45, 25, 25, "➡️"],
+    };
+    const TARGET_FPS = 60;
+    const AUDIO_FRAME_LENGTH = 757; //756.25
+    const AUDIO_SAMPLE_RATE = 44670;
+    const BUFFER_COUNT = 4;
+    const AUDIO_BUFFER_FLOAT32_LENGTH = AUDIO_FRAME_LENGTH * BUFFER_COUNT;
+
+    let buttonInputs = [];
+    let nesPadInput;
     let nes;
-    const canvas = document.querySelector("#canvas");
+    const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext('2d');
     const image = ctx.createImageData(256, 240);
-    let start_time;
-    const target_fps = 60;
-    const audio_buffer_length = 3025;
-    const audio_sample_rate = 178680;
-    let rendered_frames = 0;
-    let audio_count = 0;
+    const padCanvas = document.getElementById("pad-canvas");
+    const padCtx = padCanvas.getContext('2d');
+    padCtx.font = 'bold 22px serif';
+    padCtx.textAlign = "center";
+    padCtx.textBaseline = "middle";
+
+    let startTime;
+    let renderedFrames = 0;
+    let audioCount = 0;
     let audioCtx;
     let audioProcessorNode;
-    let audioProcessorBufferLength = 0;
-    const audioBuffer = new ArrayBuffer(audio_buffer_length * 4);
+    const audioBuffer = new SharedArrayBuffer(AUDIO_BUFFER_FLOAT32_LENGTH * 4);
     const audioBufferFloat32 = new Float32Array(audioBuffer);
+    const audioBufferStatus = new Uint32Array(new SharedArrayBuffer(8 * 2)); //readPos, writePod
+    audioBufferStatus[0] = 0;
+    audioBufferStatus[1] = 0;
 
     for (let i = 0; i < 256 * 240; i++) {
       image.data[i * 4 + 3] = 255;//A
     }
 
-    import init, { nes_new, nes_clock, nes_get_screen, WasmPadInputs } from "./pkg/y_nes_wasm.js";
+    import init, { nes_new, nes_clock, nes_get_screen, pad_new, get_version, get_core_version } from "./pkg/y_nes_wasm.js";
+
     init()
       .then(() => {
-        document.querySelector("#rom").addEventListener('change', function (e) {
-          const file = document.querySelector('#rom').files[0];
+        document.getElementById("core-version").textContent = get_core_version();
+        document.getElementById("wasm-version").textContent = get_version();
+        document.getElementById("frontend-version").textContent = VERSION;
+        document.getElementById("rom").addEventListener('change', function (e) {
+          nesPadInput = pad_new();
+          const file = document.getElementById('rom').files[0];
           const fileReader = new FileReader();
           fileReader.onload = async function webViewerChangeFileReaderOnload(evt) {
             const buffer = evt.target.result;
             const uint8Array = new Uint8Array(buffer);
             nes = nes_new(uint8Array);
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            await audioCtx.audioWorklet.addModule("audio-processor.js");
-            audioProcessorNode = new AudioWorkletNode(audioCtx, "audio-processor");
-            audioProcessorNode.port.onmessage = (e) => {
-              audioProcessorBufferLength = e.data;
-            };
-            audioProcessorNode.connect(audioCtx.destination);
+            if (audioCtx == undefined) {
+              audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: AUDIO_SAMPLE_RATE });
+              await audioCtx.audioWorklet.addModule("audio-processor.js");
+              audioProcessorNode = new AudioWorkletNode(audioCtx, "audio-processor");
+              audioProcessorNode.connect(audioCtx.destination);
+              audioProcessorNode.port.postMessage({ audioBufferStatus, audioBufferFloat32 });
+            }
 
-            rendered_frames = 0;
-            start_time = performance.now();
+            renderedFrames = 0;
+            let audioCount = 0;
+            startTime = performance.now();
           };
           fileReader.readAsArrayBuffer(file);
         }, true);
+
+        function processMouse(e, inputs, value) {
+          Object.entries(PAD_BUTTONS).forEach(([key, button], index) => {
+            let x = button[0];
+            let y = button[1];
+            let w = button[2];
+            let h = button[3];
+            let label = button[4];
+
+            if (e.offsetX >= x && e.offsetX <= x + w && e.offsetY >= y && e.offsetY <= y + h) {
+              buttonInputs[key] = value;
+            }
+          });
+        }
+        padCanvas.addEventListener("mousedown", (e) => {
+          processMouse(e, buttonInputs, true);
+        });
+        padCanvas.addEventListener("mouseup", (e) => {
+          processMouse(e, buttonInputs, false);
+        });
+        function getTouchOffsetX(e, canvas) {
+          return e.clientX - canvas.getBoundingClientRect().left;
+        }
+        function getTouchOffsetY(e, canvas) {
+          return e.clientY - canvas.getBoundingClientRect().top;
+        }
+        function processTouch(e, inputs, value) {
+          for (let i = 0; i < e.changedTouches.length; i++) {
+            let touch = e.changedTouches[i];
+            Object.entries(PAD_BUTTONS).forEach(([key, button], index) => {
+              let x = button[0];
+              let y = button[1];
+              let w = button[2];
+              let h = button[3];
+              let label = button[4];
+              let offsetX = getTouchOffsetX(touch, padCanvas);
+              let offsetY = getTouchOffsetY(touch, padCanvas);
+
+              if (offsetX >= x && offsetX <= x + w
+                && offsetY >= y && offsetY <= y + h) {
+                inputs[key] = value;
+              }
+            });
+          }
+        }
+        padCanvas.addEventListener("touchstart", (e) => {
+          processTouch(e, buttonInputs, true);
+        });
+        padCanvas.addEventListener("touchend", (e) => {
+          processTouch(e, buttonInputs, false);
+        });
+        padCanvas.addEventListener("touchmove", (e) => {
+          e.preventDefault();
+        });
       });
 
     function render(current_time) {
+      padCtx.clearRect(0, 0, padCanvas.width, padCanvas.height);
+      Object.entries(PAD_BUTTONS).forEach(([key, button], index) => {
+        let x = button[0];
+        let y = button[1];
+        let w = button[2];
+        let h = button[3];
+        let label = button[4];
+        if (buttonInputs[key]) {
+          padCtx.fillStyle = "gray";
+          padCtx.fillRect(x, y, w, h);
+        }
+        padCtx.fillStyle = "black";
+        padCtx.strokeRect(x, y, w, h);
+        padCtx.fillText(label, x + w / 2, y + h / 2, w - 4);
+      });
+
       if (nes == null) {
         window.requestAnimationFrame(render);
         return;
       }
 
-      let time_diff = (current_time - start_time) / 1000;
-      let current_frames = Math.floor(time_diff * target_fps);
-      let need_render_frames = current_frames - rendered_frames;
-      let overload_frames = Math.max(need_render_frames - 5, 0);
+      let timeDiff = (current_time - startTime) / 1000;
+      let currentFrames = Math.floor(timeDiff * TARGET_FPS);
+      let needRenderFrames = currentFrames - renderedFrames;
+      let overloadFrames = Math.max(needRenderFrames - 3, 0);
+      // let audioBufferDiff = audioBufferStatus[1] - audioBufferStatus[0];
+      // let audioBufferFilled = audioBufferDiff >= 0 ? audioBufferDiff : AUDIO_BUFFER_FLOAT32_LENGTH - audioBufferDiff;
+      // let needToRender = AUDIO_BUFFER_FLOAT32_LENGTH - audioBufferFilled > AUDIO_FRAME_LENGTH;
+      let needToRender = true;
 
-      if (target_fps != 60 || (audioProcessorBufferLength <= audio_buffer_length * 2)) {
-        let pcm_filled = 0;
-        for (let _ = 0; _ < Math.min(need_render_frames, 5); _++) {
-          let end_frame = false;
-          while (!end_frame) {
-            const result = nes_clock(nes);
-            end_frame = result.end_frame;
-            let apu_out = result.apu_out;
-            if (apu_out != undefined) {
+      if (TARGET_FPS != 60 || needToRender) {
+        Object.entries(buttonInputs).forEach(([key, pushed], index) => {
+          nesPadInput[key] = pushed;
+        });
+        for (let frame = 0; frame < Math.min(needRenderFrames, 3); frame++) {
+          let endFrame = false;
+          while (!endFrame) {
+            const result = nes_clock(nes, nesPadInput);
+            endFrame = result.end_frame;
+            let apuOut = result.apu_out;
+            if (apuOut != undefined) {
               //とりあえず雑に間引く
-              if (audio_count % 10 == 0) {
-                if (pcm_filled < audio_buffer_length) {
-                  audioBufferFloat32[pcm_filled] = apu_out;
-                  pcm_filled++;
-                }
+              if (audioCount % 40 == 0) {
+                audioBufferFloat32[audioBufferStatus[1]] = apuOut;
+                audioBufferStatus[1]++;
+                audioBufferStatus[1] %= AUDIO_BUFFER_FLOAT32_LENGTH;
               }
-              audio_count += 1;
-              audio_count %= 10;
+              audioCount += 1;
+              audioCount %= 40;
             }
             result.free();
           }
         }
-        if (pcm_filled > 0) {
-          audioProcessorNode.port.postMessage({ pcm_filled, audioBufferFloat32 });
-        }
+        renderedFrames += needRenderFrames;
       }
-      rendered_frames += need_render_frames;
 
-      const screen = nes_get_screen(nes);
-      for (let i = 0; i < 256 * 240; i++) {
-        const pixel = colors[screen[i]];
-        image.data[i * 4 + 0] = pixel[0];//R
-        image.data[i * 4 + 1] = pixel[1];//G
-        image.data[i * 4 + 2] = pixel[2];//B
+      if (needToRender) {
+        const screen = nes_get_screen(nes);
+        for (let i = 0; i < 256 * 240; i++) {
+          const pixel = COLORS[screen[i]];
+          image.data[i * 4 + 0] = pixel[0];//R
+          image.data[i * 4 + 1] = pixel[1];//G
+          image.data[i * 4 + 2] = pixel[2];//B
+          //Aも合わせて書き込んだ方がSIMD化されて速くなる？
+        }
+        ctx.putImageData(image, 0, 0);
       }
-      ctx.putImageData(image, 0, 0);
-      document.querySelector("#frame").textContent = rendered_frames;
-      if (overload_frames != 0) {
-        document.querySelector("#load").textContent = " [overload!]";
+      document.getElementById("frame").textContent = renderedFrames;
+      if (overloadFrames != 0) {
+        document.getElementById("load").style.display = "inline";
+      } else {
+        document.getElementById("load").style.display = "none";
       }
 
       window.requestAnimationFrame(render);
@@ -178,8 +286,14 @@
   </script>
   <h1 style="font-size: 1.5rem;">yNES for Browser</h1>
   <canvas id="canvas" width="256" height="240"></canvas><br>
+  <canvas id="pad-canvas" width="256" height="120"></canvas><br>
   <input type="file" id="rom" accept=".nes"><br>
-  Frame: <span id="frame"></span><span id="load"></span>
+  Frame: <span id="frame"></span><span id="load" style="display: none;"> [overload!]</span><br>
+  <hr>
+  yNES for Browser by YDKK<br>
+  Emulator Core: v<span id="core-version"></span><br>
+  Wasm Wrapper: v<span id="wasm-version"></span><br>
+  Browser Frontend: v<span id="frontend-version"></span><br>
 </body>
 
 </html>
