@@ -70,7 +70,7 @@ pub struct Cpu {
   reset: bool,
   nmi: bool,
   irq: bool,
-  adressing_overflow: bool,
+  addressing_overflow: bool,
   suspend_cycle: u16,
 }
 
@@ -105,7 +105,7 @@ impl Cpu {
       reset: false,
       nmi: false,
       irq: false,
-      adressing_overflow: false,
+      addressing_overflow: false,
       suspend_cycle: 0,
     }
   }
@@ -194,7 +194,7 @@ impl Cpu {
         }
         self.is_immediate = false;
         self.is_accumulator = false;
-        self.adressing_overflow = false;
+        self.addressing_overflow = false;
         self.op = self.bus.read(rom, apu, ppu, pad, self.pc);
         let addressing_mode = &INSTRUCTION_SET[self.op as usize].mode;
 
@@ -329,12 +329,12 @@ impl Cpu {
                 },
               );
               self.addr_l = result;
-              self.adressing_overflow = overflow;
+              self.addressing_overflow = overflow;
               self.pc += 1;
             }
             1 => {
               self.addr_h = self.bus.read(rom, apu, ppu, pad, self.pc);
-              if self.adressing_overflow == false {
+              if self.addressing_overflow == false {
                 self.state = CpuState::ExecuteInstruction;
                 self.step = 0;
                 self.pc += 1;
