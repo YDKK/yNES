@@ -1,3 +1,4 @@
+#[derive(Default)]
 struct Divider {
     period: u8,
 }
@@ -16,11 +17,7 @@ impl Divider {
         self.period = period;
     }
 }
-impl Default for Divider {
-    fn default() -> Self {
-        Self { period: Default::default() }
-    }
-}
+#[derive(Default)]
 struct DecayLevelCounter {
     count: u8,
 }
@@ -38,11 +35,7 @@ impl DecayLevelCounter {
         self.count = 15;
     }
 }
-impl Default for DecayLevelCounter {
-    fn default() -> Self {
-        Self { count: Default::default() }
-    }
-}
+#[derive(Default)]
 struct Envelope {
     start: bool,
     divider: Divider,
@@ -69,18 +62,7 @@ impl Envelope {
         }
     }
 }
-impl Default for Envelope {
-    fn default() -> Self {
-        Self {
-            start: Default::default(),
-            divider: Default::default(),
-            decay_level_counter: Default::default(),
-            output: Default::default(),
-            volume: Default::default(),
-            constant_volume: Default::default(),
-        }
-    }
-}
+#[derive(Default)]
 struct Sweep {
     divider: Divider,
     reload_flag: bool,
@@ -123,20 +105,8 @@ impl Sweep {
         self.reload_flag = true;
     }
 }
-impl Default for Sweep {
-    fn default() -> Self {
-        Self {
-            divider: Default::default(),
-            reload_flag: Default::default(),
-            enabled_flag: Default::default(),
-            divider_period: Default::default(),
-            negate_flag: Default::default(),
-            shift_count: Default::default(),
-            mute: Default::default(),
-        }
-    }
-}
 
+#[derive(Default)]
 struct Triangle {
     length_counter_halt: bool,
     liner_counter_reload_value: u8,
@@ -198,20 +168,6 @@ impl Triangle {
         self.timer |= (value as u16) << 8;
     }
 }
-impl Default for Triangle {
-    fn default() -> Self {
-        Self {
-            length_counter_halt: Default::default(),
-            liner_counter_reload_value: Default::default(),
-            liner_counter: Default::default(),
-            timer: Default::default(),
-            current_time: Default::default(),
-            current_sequencer_position: Default::default(),
-            length_counter: Default::default(),
-            liner_counter_reload_flag: Default::default(),
-        }
-    }
-}
 
 struct LinearFeedbackShiftRegister {
     register: u16,
@@ -236,6 +192,7 @@ impl Default for LinearFeedbackShiftRegister {
     }
 }
 
+#[derive(Default)]
 struct Noise {
     envelope: Envelope,
     shift_register: LinearFeedbackShiftRegister,
@@ -273,19 +230,8 @@ impl Noise {
         }
     }
 }
-impl Default for Noise {
-    fn default() -> Self {
-        Self {
-            envelope: Default::default(),
-            shift_register: Default::default(),
-            timer: Default::default(),
-            length_counter: Default::default(),
-            length_counter_halt: Default::default(),
-            current_time: Default::default(),
-        }
-    }
-}
 
+#[derive(Default)]
 struct Pulse {
     duty: u8,
     length_counter_halt: bool,
@@ -350,22 +296,7 @@ impl Pulse {
         self.timer |= (value as u16) << 8;
     }
 }
-impl Default for Pulse {
-    fn default() -> Self {
-        Self {
-            duty: Default::default(),
-            length_counter_halt: Default::default(),
-            timer: Default::default(),
-            current_time: Default::default(),
-            current_sequencer_position: Default::default(),
-            envelope: Default::default(),
-            sweep: Default::default(),
-            length_counter: Default::default(),
-            last_output: Default::default(),
-            is_pulse_1: Default::default(),
-        }
-    }
-}
+
 struct FrameCounter {
     mode: bool,              //true: 5-step sequence, false: 4-step sequence
     interrupt_inhibit: bool, //割り込み禁止フラグ
@@ -467,6 +398,7 @@ impl FrameCounter {
         }
     }
 }
+#[derive(Default)]
 struct LengthCounter {
     length: u8,
     enable: bool,
@@ -495,11 +427,6 @@ impl LengthCounter {
         if value == false {
             self.length = 0;
         }
-    }
-}
-impl Default for LengthCounter {
-    fn default() -> Self {
-        Self { length: Default::default(), enable: Default::default() }
     }
 }
 struct Mixer {
