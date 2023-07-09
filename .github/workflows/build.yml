@@ -1,9 +1,8 @@
 name: Build
 
 on:
-  push:
-    tags:
-      - '[0-9]+'
+  release:
+    types: [created]
   workflow_dispatch:
 
 env:
@@ -27,14 +26,9 @@ jobs:
         path: ./src/win/target/release/yNES-windows-${{github.ref_name}}.zip
         # The desired behavior if no files are found using the provided path.
         if-no-files-found: error
-    - name: Create release
-      uses: actions/create-release@v1
-      id: create_release
-      with:
-        draft: false
-        prerelease: false
-        release_name: ${{ github.ref_name }}
-        tag_name: ${{ github.ref }}
+    - name: Get the upload URL for a release
+      id: get_release
+      uses: bruceadams/get-release@v1
       env:
         GITHUB_TOKEN: ${{ github.token }}
     - name: Upload artifact
@@ -42,7 +36,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
       with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        upload_url: ${{ steps.get_release.outputs.upload_url }}
         asset_path: ./src/win/target/release/yNES-windows-build-${{github.ref_name}}.zip
         asset_name: yNES-windows-build-${{github.ref_name}}.zip
         asset_content_type: application/zip
