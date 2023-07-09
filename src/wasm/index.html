@@ -259,9 +259,7 @@
           }
         }
         renderedFrames += needRenderFrames;
-      }
 
-      if (needToRender) {
         const screen = nes_get_screen(nes);
         for (let i = 0; i < 256 * 240; i++) {
           const pixel = COLORS[screen[i]];
@@ -272,6 +270,7 @@
         }
         ctx.putImageData(image, 0, 0);
       }
+
       document.getElementById("frame").textContent = renderedFrames;
       if (overloadFrames != 0) {
         document.getElementById("load").style.display = "inline";

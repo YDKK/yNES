@@ -300,18 +300,19 @@ impl Window {
                 if pcm_filled > 0 && self.audio_queue.size() <= 2978 * 4 * 3 {
                     self.audio_queue.queue_audio(&self.pcm_buffers[0..pcm_filled]);
                 }
-            }
-            self.rendered_frames += need_render_frames;
+                self.rendered_frames += need_render_frames;
 
-            let screen = nes.get_screen();
-            for (index, pixel) in screen.iter().enumerate() {
-                let index = index * 4;
-                let color = COLORS[*pixel as usize];
-                self.frame_buffer[index] = color[2]; //B
-                self.frame_buffer[index + 1] = color[1]; //G
-                self.frame_buffer[index + 2] = color[0]; //R
-                self.frame_buffer[index + 3] = 0xFF; //A
+                let screen = nes.get_screen();
+                for (index, pixel) in screen.iter().enumerate() {
+                    let index = index * 4;
+                    let color = COLORS[*pixel as usize];
+                    self.frame_buffer[index] = color[2]; //B
+                    self.frame_buffer[index + 1] = color[1]; //G
+                    self.frame_buffer[index + 2] = color[0]; //R
+                    self.frame_buffer[index + 3] = 0xFF; //A
+                }
             }
+
             let target = self.target.as_ref().unwrap();
             unsafe { target.BeginDraw() };
             self.draw()?;
