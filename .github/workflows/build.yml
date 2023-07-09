@@ -14,6 +14,17 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: dtolnay/rust-toolchain@stable
+    - name: Set up cargo cache
+      uses: actions/cache@v3
+      continue-on-error: false
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-
     - name: Build Windows frontend
       working-directory: ./src/win
       run: cargo build --release
@@ -32,7 +43,7 @@ jobs:
       with:
         upload_url: ${{ steps.get_release.outputs.upload_url }}
         asset_path: ./src/win/target/release/yNES-windows-${{github.ref_name}}.zip
-        asset_name: yNES-windows-build-${{github.ref_name}}.zip
+        asset_name: yNES-windows-${{github.ref_name}}.zip
         asset_content_type: application/zip
 
   build-wasm:
