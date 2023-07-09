@@ -18,8 +18,40 @@ jobs:
     - name: Build Windows frontend
       working-directory: ./src/win
       run: cargo build --release
-  build-wasn:
+    - name: Create zip archive
+      working-directory: ./src/win/target/release
+      run: powershell Compress-Archive -Path y_nes_win.exe,SDL2.dll -DestinationPath yNES-windows-${{github.ref_name}}.zip
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3.1.2
+      with:
+        path: ./src/win/target/release/yNES-windows-build-${{github.ref_name}}.zip
+        # The desired behavior if no files are found using the provided path.
+        if-no-files-found: error
+    - name: Create release
+      uses: actions/create-release@v1
+      id: create_release
+      with:
+        draft: false
+        prerelease: false
+        release_name: ${{ github.ref_name }}
+        tag_name: ${{ github.ref }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+    - name: Upload artifact
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./src/win/target/release/yNES-windows-build-${{github.ref_name}}.zip
+        asset_name: yNES-windows-build-${{github.ref_name}}.zip
+        asset_content_type: application/zip
+
+  build-wasm:
     runs-on: ubuntu-latest
+    permissions:
+      pages: write      # to deploy to Pages
+      id-token: write   # to verify the deployment originates from an appropriate source
     steps:
     - uses: actions/checkout@v3
     - uses: dtolnay/rust-toolchain@stable
@@ -28,3 +60,15 @@ jobs:
     - name: Build wasm
       working-directory: ./src/wasm
       run: wasm-pack build --release --target web
+    - name: Pack artifact
+      working-directory: ./src/wasm
+      run: |
+        mkdir artifact
+        cp -r index.html *.js pkg artifact
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v1
+      with:
+        path: './src/wasm/artifact'
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v2
