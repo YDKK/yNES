@@ -20,12 +20,6 @@ jobs:
     - name: Create zip archive
       working-directory: ./src/win/target/release
       run: powershell Compress-Archive -Path y_nes_win.exe,SDL2.dll -DestinationPath yNES-windows-${{github.ref_name}}.zip
-    - name: Upload build artifact
-      uses: actions/upload-artifact@v3.1.2
-      with:
-        path: ./src/win/target/release/yNES-windows-${{github.ref_name}}.zip
-        # The desired behavior if no files are found using the provided path.
-        if-no-files-found: error
     - name: Get the upload URL for a release
       id: get_release
       uses: bruceadams/get-release@v1.3.2
@@ -37,7 +31,7 @@ jobs:
         GITHUB_TOKEN: ${{ github.token }}
       with:
         upload_url: ${{ steps.get_release.outputs.upload_url }}
-        asset_path: ./src/win/target/release/yNES-windows-build-${{github.ref_name}}.zip
+        asset_path: ./src/win/target/release/yNES-windows-${{github.ref_name}}.zip
         asset_name: yNES-windows-build-${{github.ref_name}}.zip
         asset_content_type: application/zip
 
