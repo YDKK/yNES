@@ -21,20 +21,20 @@ https://ydkk.github.io/yNES/
 
 - CPU
   - [x] Official Opcodes
-  - [ ] Unofficial Opcodes
+  - [x] Unofficial Opcodes
 - APU
   - [x] Pulse Channel (1, 2)
   - [x] Triangle Channel
   - [x] Noise Channel
-  - [ ] DMC
+  - [x] DMC
 - PPU
   - [x] nestestやSMBが正常に動作する程度
     - その他の細かい挙動は怪しい
   - Nametable Mirroring
     - [x] Horizontal
     - [x] Vertical
-    - [ ] Single-Screen
-    - [ ] 4-Screen
+    - [x] Single-Screen
+    - [x] 4-Screen
     - [ ] Other
 - ROM
   - [x] iNES Format

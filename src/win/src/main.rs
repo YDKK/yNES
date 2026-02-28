@@ -91,10 +91,11 @@ fn main() -> Result<()> {
     unsafe {
         CoInitializeEx(None, COINIT_MULTITHREADED)?;
     }
-    let mut window = Window::new()?;
+    let mut window = Box::new(Window::new()?);
     window.run()
 }
 
+#[allow(dead_code)]
 struct Window {
     handle: HWND,
     factory: ID2D1Factory1,
@@ -241,9 +242,8 @@ impl Window {
 
         if self.nes.is_some() {
             let nes = self.nes.as_mut().unwrap();
-            let mut input = PadInput { ..Default::default() };
-            unsafe {
-                input = PadInput {
+            let input = unsafe {
+                PadInput {
                     a: GetKeyState('X' as i32) < 0,
                     b: GetKeyState('Z' as i32) < 0,
                     select: GetKeyState(VK_ESCAPE.0.into()) < 0,
@@ -252,8 +252,8 @@ impl Window {
                     down: GetKeyState(VK_DOWN.0.into()) < 0,
                     left: GetKeyState(VK_LEFT.0.into()) < 0,
                     right: GetKeyState(VK_RIGHT.0.into()) < 0,
-                };
-            }
+                }
+            };
             let inputs = PadInputs { pad1: input, pad2: Default::default() };
             let current_time = get_time().unwrap();
             let time_diff = current_time - self.start_time;
@@ -289,7 +289,7 @@ impl Window {
                                 if self.test_audio_out.is_some() {
                                     let file = self.test_audio_out.as_mut().unwrap();
                                     let pcm_bytes = pcm.to_be_bytes();
-                                    file.write_all(&pcm_bytes);
+                                    let _ = file.write_all(&pcm_bytes);
                                 }
                             }
                             self.test_audio_count += 1;
@@ -298,7 +298,7 @@ impl Window {
                     }
                 }
                 if pcm_filled > 0 && self.audio_queue.size() <= 2978 * 4 * 3 {
-                    self.audio_queue.queue_audio(&self.pcm_buffers[0..pcm_filled]);
+                    let _ = self.audio_queue.queue_audio(&self.pcm_buffers[0..pcm_filled]);
                 }
                 self.rendered_frames += need_render_frames;
 
@@ -426,8 +426,6 @@ impl Window {
             } else {
                 self.release_device();
             }
-
-            self.render()?;
         }
 
         Ok(())
@@ -439,7 +437,6 @@ impl Window {
                 WM_PAINT => {
                     let mut ps = PAINTSTRUCT::default();
                     BeginPaint(self.handle, &mut ps);
-                    self.render().unwrap();
                     EndPaint(self.handle, &ps);
                     LRESULT(0)
                 }
@@ -450,7 +447,7 @@ impl Window {
                     LRESULT(0)
                 }
                 WM_DISPLAYCHANGE => {
-                    self.render().unwrap();
+                    self.visible = true;
                     LRESULT(0)
                 }
                 WM_USER => {

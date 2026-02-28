@@ -3,96 +3,203 @@
 
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>yNES for Browser</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      touch-action: manipulation;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      margin: 12px 0 8px;
+      color: #e94560;
+      text-shadow: 0 0 10px rgba(233, 69, 96, 0.3);
+    }
+
+    #canvas-container {
+      position: relative;
+      border: 2px solid #333;
+      border-radius: 4px;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #canvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      width: 512px;
+      height: 480px;
+    }
+
+    #controls {
+      margin: 10px 0;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn {
+      background: #16213e;
+      color: #e0e0e0;
+      border: 1px solid #0f3460;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: background 0.2s;
+    }
+
+    .btn:hover {
+      background: #0f3460;
+    }
+
+    .btn:active {
+      background: #e94560;
+    }
+
+    #rom-label {
+      display: inline-block;
+    }
+
+    #rom {
+      display: none;
+    }
+
+    #status-bar {
+      font-size: 0.8rem;
+      color: #888;
+      margin: 4px 0;
+    }
+
+    #load {
+      color: #e94560;
+      display: none;
+      font-weight: bold;
+    }
+
+    #pad-container {
+      display: none;
+      width: 100%;
+      max-width: 512px;
+      margin-top: 8px;
+    }
+
+    #pad-canvas {
+      width: 100%;
+      height: 140px;
+      touch-action: none;
+    }
+
+    footer {
+      margin-top: auto;
+      padding: 12px;
+      font-size: 0.75rem;
+      color: #555;
+      text-align: center;
+      border-top: 1px solid #222;
+      width: 100%;
+    }
+
+    @media (max-width: 540px) {
+      #canvas {
+        width: 100vw;
+        height: calc(100vw * 240 / 256);
+      }
+
+      #pad-container {
+        display: block;
+      }
+
+      h1 {
+        font-size: 1.1rem;
+      }
+    }
+
+    @media (pointer: coarse) {
+      #pad-container {
+        display: block;
+      }
+    }
+  </style>
 </head>
 
 <body>
   <script src="coi-serviceworker.min.js"></script>
-  <script type="module">
-    const VERSION = "0.1.0";
-    const COLORS = [ //RGB
-      [84, 84, 84],
-      [0, 30, 116],
-      [8, 16, 144],
-      [48, 0, 136],
-      [68, 0, 100],
-      [92, 0, 48],
-      [84, 4, 0],
-      [60, 24, 0],
-      [32, 42, 0],
-      [8, 58, 0],
-      [0, 64, 0],
-      [0, 60, 0],
-      [0, 50, 60],
-      [0, 0, 0],
-      [0, 0, 0],
-      [0, 0, 0],
-      [152, 150, 152],
-      [8, 76, 196],
-      [48, 50, 236],
-      [92, 30, 228],
-      [136, 20, 176],
-      [160, 20, 100],
-      [152, 34, 32],
-      [120, 60, 0],
-      [84, 90, 0],
-      [40, 114, 0],
-      [8, 124, 0],
-      [0, 118, 40],
-      [0, 102, 120],
-      [0, 0, 0],
-      [0, 0, 0],
-      [0, 0, 0],
-      [236, 238, 236],
-      [76, 154, 236],
-      [120, 124, 236],
-      [176, 98, 236],
-      [228, 84, 236],
-      [236, 88, 180],
-      [236, 106, 100],
-      [212, 136, 32],
-      [160, 170, 0],
-      [116, 196, 0],
-      [76, 208, 32],
-      [56, 204, 108],
-      [56, 180, 204],
-      [60, 60, 60],
-      [0, 0, 0],
-      [0, 0, 0],
-      [236, 238, 236],
-      [168, 204, 236],
-      [188, 188, 236],
-      [212, 178, 236],
-      [236, 174, 236],
-      [236, 174, 212],
-      [236, 180, 176],
-      [228, 196, 144],
-      [204, 210, 120],
-      [180, 222, 120],
-      [168, 226, 144],
-      [152, 226, 180],
-      [160, 214, 228],
-      [160, 162, 160],
-      [0, 0, 0],
-      [0, 0, 0],
-    ];
-    const PAD_BUTTONS = { //XYWH
-      a: [220, 65, 30, 30, "A"],
-      b: [180, 65, 30, 30, "B"],
-      select: [100, 75, 30, 20, "SELECT"],
-      start: [135, 75, 30, 20, "START"],
-      up: [35, 20, 25, 25, "⬆️"],
-      down: [35, 70, 25, 25, "⬇️"],
-      left: [10, 45, 25, 25, "⬅️"],
-      right: [60, 45, 25, 25, "➡️"],
-    };
-    const TARGET_FPS = 60;
-    const AUDIO_FRAME_LENGTH = 757; //756.25
-    const AUDIO_SAMPLE_RATE = 44670;
-    const BUFFER_COUNT = 4;
-    const AUDIO_BUFFER_FLOAT32_LENGTH = AUDIO_FRAME_LENGTH * BUFFER_COUNT;
+  <h1>yNES for Browser</h1>
 
-    let buttonInputs = [];
+  <div id="canvas-container">
+    <canvas id="canvas" width="256" height="240"></canvas>
+  </div>
+
+  <div id="controls">
+    <label class="btn" id="rom-label" for="rom">📁 Load ROM</label>
+    <input type="file" id="rom" accept=".nes">
+  </div>
+
+  <div id="status-bar">
+    Frame: <span id="frame">0</span>
+    <span id="load"> [overload!]</span>
+  </div>
+
+  <div id="pad-container">
+    <canvas id="pad-canvas" width="512" height="140"></canvas>
+  </div>
+
+  <footer>
+    <a href="https://github.com/YDKK/yNES">yNES</a> for Browser by YDKK<br>
+    Core: v<span id="core-version">-</span> |
+    Wasm: v<span id="wasm-version">-</span> |
+    Frontend: v<span id="frontend-version">-</span>
+  </footer>
+
+  <script type="module">
+    const VERSION = "0.2.0";
+    const TARGET_FPS = 60;
+    const AUDIO_SAMPLE_RATE = 44100;
+    // ~735 samples per frame at 44100 Hz / 60 fps
+    const SAMPLES_PER_FRAME = Math.ceil(AUDIO_SAMPLE_RATE / TARGET_FPS);
+    const BUFFER_FRAMES = 8;
+    const AUDIO_BUFFER_LENGTH = SAMPLES_PER_FRAME * BUFFER_FRAMES;
+
+    const PAD_BUTTONS = {
+      up: [70, 10, 45, 45, "▲"],
+      down: [70, 90, 45, 45, "▼"],
+      left: [20, 50, 45, 45, "◀"],
+      right: [120, 50, 45, 45, "▶"],
+      select: [200, 95, 55, 30, "SEL"],
+      start: [265, 95, 55, 30, "STA"],
+      b: [360, 80, 55, 55, "B"],
+      a: [430, 80, 55, 55, "A"],
+    };
+
+    // Keyboard mapping
+    const KEY_MAP = {
+      'ArrowUp': 'up', 'ArrowDown': 'down', 'ArrowLeft': 'left', 'ArrowRight': 'right',
+      'z': 'b', 'Z': 'b', 'x': 'a', 'X': 'a',
+      'Escape': 'select', 'Enter': 'start',
+    };
+
+    let buttonInputs = {};
     let nesPadInput;
     let nes;
     const canvas = document.getElementById("canvas");
@@ -100,199 +207,175 @@
     const image = ctx.createImageData(256, 240);
     const padCanvas = document.getElementById("pad-canvas");
     const padCtx = padCanvas.getContext('2d');
-    padCtx.font = 'bold 22px serif';
-    padCtx.textAlign = "center";
-    padCtx.textBaseline = "middle";
 
     let startTime;
     let renderedFrames = 0;
-    let audioCount = 0;
     let audioCtx;
     let audioProcessorNode;
-    const audioBuffer = new SharedArrayBuffer(AUDIO_BUFFER_FLOAT32_LENGTH * 4);
+    const audioBuffer = new SharedArrayBuffer(AUDIO_BUFFER_LENGTH * 4);
     const audioBufferFloat32 = new Float32Array(audioBuffer);
-    const audioBufferStatus = new Uint32Array(new SharedArrayBuffer(8 * 2)); //readPos, writePod
+    const audioBufferStatus = new Uint32Array(new SharedArrayBuffer(8));
     audioBufferStatus[0] = 0;
     audioBufferStatus[1] = 0;
 
+    // Pre-fill alpha channel
     for (let i = 0; i < 256 * 240; i++) {
-      image.data[i * 4 + 3] = 255;//A
+      image.data[i * 4 + 3] = 255;
     }
 
-    import init, { nes_new, nes_clock, nes_get_screen, pad_new, get_version, get_core_version } from "./pkg/y_nes_wasm.js";
+    import init, {
+      nes_new, nes_clock_frame, nes_get_screen_rgba,
+      nes_clock, nes_get_screen,
+      pad_new, get_version, get_core_version,
+    } from "./pkg/y_nes_wasm.js";
 
-    init()
-      .then(() => {
-        document.getElementById("core-version").textContent = get_core_version();
-        document.getElementById("wasm-version").textContent = get_version();
-        document.getElementById("frontend-version").textContent = VERSION;
-        document.getElementById("rom").addEventListener('change', function (e) {
-          nesPadInput = pad_new();
-          const file = document.getElementById('rom').files[0];
-          const fileReader = new FileReader();
-          fileReader.onload = async function webViewerChangeFileReaderOnload(evt) {
-            const buffer = evt.target.result;
-            const uint8Array = new Uint8Array(buffer);
-            nes = nes_new(uint8Array);
-            if (audioCtx == undefined) {
-              audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: AUDIO_SAMPLE_RATE });
-              await audioCtx.audioWorklet.addModule("audio-processor.js");
-              audioProcessorNode = new AudioWorkletNode(audioCtx, "audio-processor");
-              audioProcessorNode.connect(audioCtx.destination);
-              audioProcessorNode.port.postMessage({ audioBufferStatus, audioBufferFloat32 });
-            }
+    init().then(() => {
+      document.getElementById("core-version").textContent = get_core_version();
+      document.getElementById("wasm-version").textContent = get_version();
+      document.getElementById("frontend-version").textContent = VERSION;
 
-            renderedFrames = 0;
-            let audioCount = 0;
-            startTime = performance.now();
-          };
-          fileReader.readAsArrayBuffer(file);
-        }, true);
+      document.getElementById("rom").addEventListener('change', async function (e) {
+        const file = this.files[0];
+        if (!file) return;
+        document.getElementById("rom-label").textContent = "📁 " + file.name;
 
-        function processMouse(e, inputs, value) {
-          Object.entries(PAD_BUTTONS).forEach(([key, button], index) => {
-            let x = button[0];
-            let y = button[1];
-            let w = button[2];
-            let h = button[3];
-            let label = button[4];
+        const buffer = await file.arrayBuffer();
+        const uint8Array = new Uint8Array(buffer);
+        nesPadInput = pad_new();
+        nes = nes_new(uint8Array);
 
-            if (e.offsetX >= x && e.offsetX <= x + w && e.offsetY >= y && e.offsetY <= y + h) {
-              buttonInputs[key] = value;
-            }
-          });
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: AUDIO_SAMPLE_RATE });
+          await audioCtx.audioWorklet.addModule("audio-processor.js");
+          audioProcessorNode = new AudioWorkletNode(audioCtx, "audio-processor");
+          audioProcessorNode.connect(audioCtx.destination);
+          audioProcessorNode.port.postMessage({ audioBufferStatus, audioBufferFloat32 });
         }
-        padCanvas.addEventListener("mousedown", (e) => {
-          processMouse(e, buttonInputs, true);
-        });
-        padCanvas.addEventListener("mouseup", (e) => {
-          processMouse(e, buttonInputs, false);
-        });
-        function getTouchOffsetX(e, canvas) {
-          return e.clientX - canvas.getBoundingClientRect().left;
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
         }
-        function getTouchOffsetY(e, canvas) {
-          return e.clientY - canvas.getBoundingClientRect().top;
-        }
-        function processTouch(e, inputs, value) {
-          for (let i = 0; i < e.changedTouches.length; i++) {
-            let touch = e.changedTouches[i];
-            Object.entries(PAD_BUTTONS).forEach(([key, button], index) => {
-              let x = button[0];
-              let y = button[1];
-              let w = button[2];
-              let h = button[3];
-              let label = button[4];
-              let offsetX = getTouchOffsetX(touch, padCanvas);
-              let offsetY = getTouchOffsetY(touch, padCanvas);
 
-              if (offsetX >= x && offsetX <= x + w
-                && offsetY >= y && offsetY <= y + h) {
-                inputs[key] = value;
-              }
-            });
+        renderedFrames = 0;
+        startTime = performance.now();
+      });
+
+      // Keyboard input
+      document.addEventListener("keydown", (e) => {
+        const btn = KEY_MAP[e.key];
+        if (btn) { buttonInputs[btn] = true; e.preventDefault(); }
+      });
+      document.addEventListener("keyup", (e) => {
+        const btn = KEY_MAP[e.key];
+        if (btn) { buttonInputs[btn] = false; e.preventDefault(); }
+      });
+
+      // Touch / mouse input for pad
+      function getButtonAt(x, y) {
+        for (const [key, b] of Object.entries(PAD_BUTTONS)) {
+          if (x >= b[0] && x <= b[0] + b[2] && y >= b[1] && y <= b[1] + b[3]) return key;
+        }
+        return null;
+      }
+      padCanvas.addEventListener("mousedown", (e) => {
+        const btn = getButtonAt(e.offsetX, e.offsetY);
+        if (btn) buttonInputs[btn] = true;
+      });
+      padCanvas.addEventListener("mouseup", () => {
+        for (const k of Object.keys(PAD_BUTTONS)) buttonInputs[k] = false;
+      });
+      padCanvas.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+        const rect = padCanvas.getBoundingClientRect();
+        const sx = padCanvas.width / rect.width;
+        const sy = padCanvas.height / rect.height;
+        for (const t of e.changedTouches) {
+          const btn = getButtonAt((t.clientX - rect.left) * sx, (t.clientY - rect.top) * sy);
+          if (btn) buttonInputs[btn] = true;
+        }
+      });
+      padCanvas.addEventListener("touchend", (e) => {
+        e.preventDefault();
+        const rect = padCanvas.getBoundingClientRect();
+        const sx = padCanvas.width / rect.width;
+        const sy = padCanvas.height / rect.height;
+        for (const t of e.changedTouches) {
+          const btn = getButtonAt((t.clientX - rect.left) * sx, (t.clientY - rect.top) * sy);
+          if (btn) buttonInputs[btn] = false;
+        }
+      });
+      padCanvas.addEventListener("touchmove", (e) => { e.preventDefault(); });
+
+      // Main render loop
+      function render(currentTime) {
+        drawPad();
+
+        if (!nes) {
+          window.requestAnimationFrame(render);
+          return;
+        }
+
+        const timeDiff = (currentTime - startTime) / 1000;
+        const currentFrames = Math.floor(timeDiff * TARGET_FPS);
+        const needRenderFrames = currentFrames - renderedFrames;
+        const overloadFrames = Math.max(needRenderFrames - 3, 0);
+
+        // Apply pad input
+        if (nesPadInput) {
+          for (const key of Object.keys(PAD_BUTTONS)) {
+            nesPadInput[key] = !!buttonInputs[key];
           }
         }
-        padCanvas.addEventListener("touchstart", (e) => {
-          processTouch(e, buttonInputs, true);
-        });
-        padCanvas.addEventListener("touchend", (e) => {
-          processTouch(e, buttonInputs, false);
-        });
-        padCanvas.addEventListener("touchmove", (e) => {
-          e.preventDefault();
-        });
-      });
 
-    function render(current_time) {
-      padCtx.clearRect(0, 0, padCanvas.width, padCanvas.height);
-      Object.entries(PAD_BUTTONS).forEach(([key, button], index) => {
-        let x = button[0];
-        let y = button[1];
-        let w = button[2];
-        let h = button[3];
-        let label = button[4];
-        if (buttonInputs[key]) {
-          padCtx.fillStyle = "gray";
-          padCtx.fillRect(x, y, w, h);
-        }
-        padCtx.fillStyle = "black";
-        padCtx.strokeRect(x, y, w, h);
-        padCtx.fillText(label, x + w / 2, y + h / 2, w - 4);
-      });
+        // Run up to 3 frames to catch up
+        const framesToRun = Math.min(needRenderFrames, 3);
+        for (let f = 0; f < framesToRun; f++) {
+          // Frame-based API: one call runs entire frame and returns audio
+          const audioSamples = nes_clock_frame(nes, nesPadInput);
 
-      if (nes == null) {
-        window.requestAnimationFrame(render);
-        return;
-      }
-
-      let timeDiff = (current_time - startTime) / 1000;
-      let currentFrames = Math.floor(timeDiff * TARGET_FPS);
-      let needRenderFrames = currentFrames - renderedFrames;
-      let overloadFrames = Math.max(needRenderFrames - 3, 0);
-      // let audioBufferDiff = audioBufferStatus[1] - audioBufferStatus[0];
-      // let audioBufferFilled = audioBufferDiff >= 0 ? audioBufferDiff : AUDIO_BUFFER_FLOAT32_LENGTH - audioBufferDiff;
-      // let needToRender = AUDIO_BUFFER_FLOAT32_LENGTH - audioBufferFilled > AUDIO_FRAME_LENGTH;
-      let needToRender = true;
-
-      if (TARGET_FPS != 60 || needToRender) {
-        Object.entries(buttonInputs).forEach(([key, pushed], index) => {
-          nesPadInput[key] = pushed;
-        });
-        for (let frame = 0; frame < Math.min(needRenderFrames, 3); frame++) {
-          let endFrame = false;
-          while (!endFrame) {
-            const result = nes_clock(nes, nesPadInput);
-            endFrame = result.end_frame;
-            let apuOut = result.apu_out;
-            if (apuOut != undefined) {
-              //とりあえず雑に間引く
-              if (audioCount % 40 == 0) {
-                audioBufferFloat32[audioBufferStatus[1]] = apuOut;
-                audioBufferStatus[1]++;
-                audioBufferStatus[1] %= AUDIO_BUFFER_FLOAT32_LENGTH;
-              }
-              audioCount += 1;
-              audioCount %= 40;
-            }
-            result.free();
+          // Push audio samples to ring buffer
+          const bufLen = audioBufferFloat32.length;
+          for (let i = 0; i < audioSamples.length; i++) {
+            const nextWrite = (audioBufferStatus[1] + 1) % bufLen;
+            if (nextWrite === audioBufferStatus[0]) break; // Buffer full
+            audioBufferFloat32[audioBufferStatus[1]] = audioSamples[i];
+            audioBufferStatus[1] = nextWrite;
           }
         }
         renderedFrames += needRenderFrames;
 
-        const screen = nes_get_screen(nes);
-        for (let i = 0; i < 256 * 240; i++) {
-          const pixel = COLORS[screen[i]];
-          image.data[i * 4 + 0] = pixel[0];//R
-          image.data[i * 4 + 1] = pixel[1];//G
-          image.data[i * 4 + 2] = pixel[2];//B
-          //Aも合わせて書き込んだ方がSIMD化されて速くなる？
-        }
+        // Render screen - get RGBA directly from Rust
+        const rgba = nes_get_screen_rgba(nes);
+        image.data.set(rgba);
         ctx.putImageData(image, 0, 0);
+
+        document.getElementById("frame").textContent = renderedFrames;
+        document.getElementById("load").style.display = overloadFrames > 0 ? "inline" : "none";
+
+        window.requestAnimationFrame(render);
       }
 
-      document.getElementById("frame").textContent = renderedFrames;
-      if (overloadFrames != 0) {
-        document.getElementById("load").style.display = "inline";
-      } else {
-        document.getElementById("load").style.display = "none";
+      function drawPad() {
+        padCtx.clearRect(0, 0, padCanvas.width, padCanvas.height);
+        padCtx.font = 'bold 16px sans-serif';
+        padCtx.textAlign = "center";
+        padCtx.textBaseline = "middle";
+        for (const [key, b] of Object.entries(PAD_BUTTONS)) {
+          const [x, y, w, h, label] = b;
+          padCtx.fillStyle = buttonInputs[key] ? "rgba(233,69,96,0.6)" : "rgba(255,255,255,0.1)";
+          padCtx.strokeStyle = "#555";
+          padCtx.lineWidth = 1.5;
+          padCtx.beginPath();
+          padCtx.roundRect(x, y, w, h, 8);
+          padCtx.fill();
+          padCtx.stroke();
+          padCtx.fillStyle = buttonInputs[key] ? "#fff" : "#aaa";
+          padCtx.fillText(label, x + w / 2, y + h / 2);
+        }
       }
 
       window.requestAnimationFrame(render);
-    }
-
-    window.requestAnimationFrame(render);
+    });
   </script>
-  <h1 style="font-size: 1.5rem;">yNES for Browser</h1>
-  <canvas id="canvas" width="256" height="240"></canvas><br>
-  <canvas id="pad-canvas" width="256" height="120"></canvas><br>
-  <input type="file" id="rom" accept=".nes"><br>
-  Frame: <span id="frame"></span><span id="load" style="display: none;"> [overload!]</span><br>
-  <hr>
-  yNES for Browser by YDKK<br>
-  Emulator Core: v<span id="core-version"></span><br>
-  Wasm Wrapper: v<span id="wasm-version"></span><br>
-  Browser Frontend: v<span id="frontend-version"></span><br>
 </body>
 
 </html>

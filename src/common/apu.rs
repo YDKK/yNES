@@ -6,8 +6,8 @@ impl Divider {
     fn clock(&mut self, decay_level_counter: &mut Option<&mut DecayLevelCounter>, loop_flag: bool, period: u8) {
         if self.period == 0 {
             self.load(period);
-            if decay_level_counter.is_some() {
-                decay_level_counter.as_mut().unwrap().clock(loop_flag);
+            if let Some(ref mut dlc) = decay_level_counter {
+                dlc.clock(loop_flag);
             }
         } else {
             self.period -= 1;
@@ -17,6 +17,7 @@ impl Divider {
         self.period = period;
     }
 }
+
 #[derive(Default)]
 struct DecayLevelCounter {
     count: u8,
@@ -35,6 +36,7 @@ impl DecayLevelCounter {
         self.count = 15;
     }
 }
+
 #[derive(Default)]
 struct Envelope {
     start: bool,
@@ -62,6 +64,7 @@ impl Envelope {
         }
     }
 }
+
 #[derive(Default)]
 struct Sweep {
     divider: Divider,
@@ -82,7 +85,7 @@ impl Sweep {
 
         self.mute = (timer < 8) || (target_period > 0x7FF);
 
-        let result = if self.enabled_flag && self.shift_count != 0 && self.divider.period == 0 && self.mute == false {
+        let result = if self.enabled_flag && self.shift_count != 0 && self.divider.period == 0 && !self.mute {
             target_period
         } else {
             timer
@@ -125,10 +128,8 @@ impl Triangle {
     fn clock_linear_counter(&mut self) {
         if self.liner_counter_reload_flag {
             self.liner_counter = self.liner_counter_reload_value;
-        } else {
-            if self.liner_counter != 0 {
-                self.liner_counter -= 1;
-            }
+        } else if self.liner_counter != 0 {
+            self.liner_counter -= 1;
         }
         if !self.length_counter_halt {
             self.liner_counter_reload_flag = false;
@@ -138,6 +139,7 @@ impl Triangle {
         self.length_counter_halt = control_flag;
         self.liner_counter_reload_value = counter_reload_value;
     }
+    #[inline(always)]
     fn clock(&mut self) {
         if self.current_time == 0 {
             self.current_time = self.timer;
@@ -149,7 +151,7 @@ impl Triangle {
             self.current_time -= 1;
         }
     }
-
+    #[inline(always)]
     fn get_value(&self) -> u8 {
         if self.timer >= 2 {
             Triangle::OUTPUT[self.current_sequencer_position as usize]
@@ -157,12 +159,10 @@ impl Triangle {
             0
         }
     }
-
     fn set_timer_low(&mut self, value: u8) {
         self.timer &= 0xFF00;
         self.timer |= value as u16;
     }
-
     fn set_timer_high(&mut self, value: u8) {
         self.timer &= 0x00FF;
         self.timer |= (value as u16) << 8;
@@ -174,21 +174,24 @@ struct LinearFeedbackShiftRegister {
     mode_flag: bool,
 }
 impl LinearFeedbackShiftRegister {
+    #[inline(always)]
     fn clock(&mut self) {
-        let feedback = (self.register & 0x01)
+        let feedback = ((self.register & 0x01)
             ^ if self.mode_flag {
                 (self.register & 0x40) >> 6
             } else {
                 (self.register & 0x02) >> 1
-            }
+            })
             == 0x01;
         self.register >>= 1;
-        self.register |= (if feedback { 1 } else { 0 } << 14);
+        if feedback {
+            self.register |= 1 << 14;
+        }
     }
 }
 impl Default for LinearFeedbackShiftRegister {
     fn default() -> Self {
-        Self { register: 1, mode_flag: Default::default() }
+        Self { register: 1, mode_flag: false }
     }
 }
 
@@ -205,6 +208,7 @@ impl Noise {
     const TIMER_PERIOD: [u16; 0x10] = [
         4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
     ];
+    #[inline(always)]
     fn clock(&mut self) {
         if self.current_time == 0 {
             self.current_time = self.timer;
@@ -222,6 +226,7 @@ impl Noise {
     fn clock_length_counter(&mut self) {
         self.length_counter.clock(self.length_counter_halt);
     }
+    #[inline(always)]
     fn get_value(&self) -> u8 {
         if (self.shift_register.register & 0x01) == 0x01 || self.length_counter.length == 0 {
             0
@@ -266,6 +271,7 @@ impl Pulse {
     fn reset_sequencer(&mut self) {
         self.current_sequencer_position = 0;
     }
+    #[inline(always)]
     fn clock(&mut self) {
         let envelope = self.envelope.output;
         let length = self.length_counter.length;
@@ -275,15 +281,15 @@ impl Pulse {
             self.current_sequencer_position %= 8;
         } else {
             self.current_time -= 1;
-        };
+        }
         let sequencer = Pulse::OUTPUT[self.duty as usize][self.current_sequencer_position as usize];
-
-        self.last_output = if self.sweep.mute || sequencer == false || length == 0 || self.timer < 8 {
+        self.last_output = if self.sweep.mute || !sequencer || length == 0 || self.timer < 8 {
             0
         } else {
             envelope
         };
     }
+    #[inline(always)]
     fn get_value(&self) -> u8 {
         self.last_output
     }
@@ -294,6 +300,119 @@ impl Pulse {
     fn set_timer_high(&mut self, value: u8) {
         self.timer &= 0x00FF;
         self.timer |= (value as u16) << 8;
+    }
+}
+
+/// DMC (Delta Modulation Channel)
+struct Dmc {
+    irq_enabled: bool,
+    loop_flag: bool,
+    rate_index: u8,
+    timer: u16,
+    current_time: u16,
+    output_level: u8,
+    sample_address: u16,
+    sample_length: u16,
+    current_address: u16,
+    bytes_remaining: u16,
+    sample_buffer: Option<u8>,
+    shift_register: u8,
+    bits_remaining: u8,
+    silence_flag: bool,
+    interrupt_flag: bool,
+}
+impl Default for Dmc {
+    fn default() -> Self {
+        Self {
+            irq_enabled: false,
+            loop_flag: false,
+            rate_index: 0,
+            timer: Self::RATE_TABLE[0],
+            current_time: Self::RATE_TABLE[0],
+            output_level: 0,
+            sample_address: 0xC000,
+            sample_length: 1,
+            current_address: 0xC000,
+            bytes_remaining: 0,
+            sample_buffer: None,
+            shift_register: 0,
+            bits_remaining: 0,
+            silence_flag: true,
+            interrupt_flag: false,
+        }
+    }
+}
+impl Dmc {
+    const RATE_TABLE: [u16; 16] = [
+        428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+    ];
+
+    fn clock(&mut self, prg_rom: &[u8]) {
+        if self.current_time == 0 {
+            self.current_time = self.timer;
+            if !self.silence_flag {
+                if self.shift_register & 1 != 0 {
+                    if self.output_level <= 125 {
+                        self.output_level += 2;
+                    }
+                } else if self.output_level >= 2 {
+                    self.output_level -= 2;
+                }
+                self.shift_register >>= 1;
+            }
+            self.bits_remaining = self.bits_remaining.saturating_sub(1);
+            if self.bits_remaining == 0 {
+                self.bits_remaining = 8;
+                if let Some(buffer) = self.sample_buffer.take() {
+                    self.silence_flag = false;
+                    self.shift_register = buffer;
+                } else {
+                    self.silence_flag = true;
+                }
+                if self.sample_buffer.is_none() && self.bytes_remaining > 0 {
+                    self.fetch_sample(prg_rom);
+                }
+            }
+        } else {
+            self.current_time -= 1;
+        }
+    }
+
+    fn fetch_sample(&mut self, prg_rom: &[u8]) {
+        if self.bytes_remaining > 0 {
+            let addr = self.current_address;
+            let mut rom_addr = (addr.wrapping_sub(0x8000)) as usize;
+            if !prg_rom.is_empty() && rom_addr >= prg_rom.len() {
+                rom_addr %= prg_rom.len();
+            }
+            self.sample_buffer = if prg_rom.is_empty() {
+                Some(0)
+            } else {
+                Some(prg_rom[rom_addr])
+            };
+            self.current_address = self.current_address.wrapping_add(1);
+            if self.current_address == 0 {
+                self.current_address = 0x8000;
+            }
+            self.bytes_remaining -= 1;
+            if self.bytes_remaining == 0 {
+                if self.loop_flag {
+                    self.restart();
+                } else if self.irq_enabled {
+                    self.interrupt_flag = true;
+                }
+            }
+        }
+    }
+
+    fn restart(&mut self) {
+        self.current_address = self.sample_address;
+        self.bytes_remaining = self.sample_length;
+    }
+
+    #[inline(always)]
+    fn get_value(&self) -> u8 {
+        self.output_level
     }
 }
 
@@ -334,7 +453,7 @@ impl FrameCounter {
                 triangle.clock_linear_counter();
             }
             14914 => {
-                if self.mode == false {
+                if !self.mode {
                     //エンベローブ, 三角波線形カウンタ
                     //長さカウンタ, スイープユニット
                     //割り込み
@@ -398,6 +517,7 @@ impl FrameCounter {
         }
     }
 }
+
 #[derive(Default)]
 struct LengthCounter {
     length: u8,
@@ -410,7 +530,7 @@ impl LengthCounter {
     ];
     fn clock(&mut self, length_counter_halt: bool) {
         if self.enable {
-            if length_counter_halt == false && self.length != 0 {
+            if !length_counter_halt && self.length != 0 {
                 self.length -= 1;
             }
         } else {
@@ -424,77 +544,78 @@ impl LengthCounter {
     }
     fn set_enable(&mut self, value: bool) {
         self.enable = value;
-        if value == false {
+        if !value {
             self.length = 0;
         }
     }
 }
+
 struct Mixer {
     pulse_table: [f32; 31],
     tnd_table: [f32; 203],
 }
 impl Mixer {
     fn new() -> Self {
-        Mixer {
-            pulse_table: (0..31)
-                .map(|i| {
-                    if i == 0 {
-                        0.0
-                    } else {
-                        95.52 / (8128.0 / (i as f32) + 100.0)
-                    }
-                })
-                .collect::<Vec<f32>>()
-                .as_slice()
-                .try_into()
-                .unwrap(),
-            tnd_table: (0..203)
-                .map(|i| {
-                    if i == 0 {
-                        0.0
-                    } else {
-                        163.67 / (24329.0 / (i as f32) + 100.0)
-                    }
-                })
-                .collect::<Vec<f32>>()
-                .as_slice()
-                .try_into()
-                .unwrap(),
+        let mut pulse_table = [0.0f32; 31];
+        for i in 0..31 {
+            pulse_table[i] = if i == 0 {
+                0.0
+            } else {
+                95.52 / (8128.0 / (i as f32) + 100.0)
+            };
         }
+        let mut tnd_table = [0.0f32; 203];
+        for i in 0..203 {
+            tnd_table[i] = if i == 0 {
+                0.0
+            } else {
+                163.67 / (24329.0 / (i as f32) + 100.0)
+            };
+        }
+        Mixer { pulse_table, tnd_table }
     }
+    #[inline(always)]
     fn mix(&self, pulse1: u8, pulse2: u8, triangle: u8, noise: u8, dmc: u8) -> f32 {
-        self.pulse_table[(pulse1 + pulse2) as usize] + self.tnd_table[(3 * triangle + 2 * noise + dmc) as usize]
+        self.pulse_table[(pulse1 + pulse2) as usize]
+            + self.tnd_table[(3 * triangle as u16 + 2 * noise as u16 + dmc as u16) as usize]
     }
 }
+
 pub struct Apu {
     pulse1: Pulse,
     pulse2: Pulse,
     triangle: Triangle,
     noise: Noise,
+    dmc: Dmc,
     frame_counter: FrameCounter,
     mixer: Mixer,
     clock_count: u8,
 }
+
 impl Apu {
     pub fn new() -> Self {
         Apu {
             pulse1: Pulse { is_pulse_1: true, ..Default::default() },
             pulse2: Pulse { ..Default::default() },
             triangle: Triangle { ..Default::default() },
+            noise: Default::default(),
+            dmc: Default::default(),
             frame_counter: FrameCounter { mode: false, interrupt_inhibit: false, count: 0, interrupt_flag: false },
             mixer: Mixer::new(),
             clock_count: 0,
-            noise: Default::default(),
         }
     }
-    pub fn clock(&mut self) -> f32 {
-        if self.clock_count % 2 == 0 {
+
+    /// Single CPU cycle clock - returns the raw mixed output
+    #[inline(always)]
+    pub fn clock(&mut self, prg_rom: &[u8]) -> f32 {
+        if self.clock_count == 0 {
             self.frame_counter
                 .clock(&mut self.pulse1, &mut self.pulse2, &mut self.triangle, &mut self.noise);
             self.pulse1.clock();
             self.pulse2.clock();
             self.noise.clock();
-            //self.dmc.clock();
+            self.dmc.clock(prg_rom);
         }
         self.triangle.clock();
 
@@ -502,11 +623,12 @@ impl Apu {
         let pulse2 = self.pulse2.get_value();
         let triangle = self.triangle.get_value();
         let noise = self.noise.get_value();
+        let dmc = self.dmc.get_value();
 
-        self.clock_count += 1;
-        self.clock_count %= 2;
-        self.mixer.mix(pulse1, pulse2, triangle, noise, 0)
+        self.clock_count ^= 1;
+        self.mixer.mix(pulse1, pulse2, triangle, noise, dmc)
     }
+
     pub fn write(&mut self, addr: u8, value: u8) {
         match addr {
             0x00 => {
@@ -527,7 +649,6 @@ impl Apu {
                 self.noise.envelope.constant_volume = value & 0x10 == 0x10;
                 self.noise.envelope.volume = value & 0x0F;
             }
-
             0x01 => {
                 let enabled = (value & 0b1000_0000) == 0b1000_0000;
                 let period = (value & 0b0111_0000) >> 4;
@@ -542,21 +663,13 @@ impl Apu {
                 let shift_count = value & 0b0000_0111;
                 self.pulse2.set_sweep(enabled, period, negate, shift_count);
             }
-
-            0x02 => {
-                self.pulse1.set_timer_low(value);
-            }
-            0x06 => {
-                self.pulse2.set_timer_low(value);
-            }
-            0x0A => {
-                self.triangle.set_timer_low(value);
-            }
+            0x02 => self.pulse1.set_timer_low(value),
+            0x06 => self.pulse2.set_timer_low(value),
+            0x0A => self.triangle.set_timer_low(value),
             0x0E => {
                 self.noise.shift_register.mode_flag = value & 0x80 == 0x80;
                 self.noise.set_timer_period(value & 0x0F);
             }
-
             0x03 => {
                 self.pulse1.length_counter.set_length((value & 0xF8) >> 3);
                 self.pulse1.set_timer_high(value & 0b111);
@@ -578,9 +691,34 @@ impl Apu {
                 self.noise.length_counter.set_length((value & 0xF8) >> 3);
                 self.noise.envelope.start = true;
             }
-
+            // DMC registers
+            0x10 => {
+                self.dmc.irq_enabled = value & 0x80 != 0;
+                self.dmc.loop_flag = value & 0x40 != 0;
+                self.dmc.rate_index = value & 0x0F;
+                self.dmc.timer = Dmc::RATE_TABLE[self.dmc.rate_index as usize];
+                if !self.dmc.irq_enabled {
+                    self.dmc.interrupt_flag = false;
+                }
+            }
+            0x11 => {
+                self.dmc.output_level = value & 0x7F;
+            }
+            0x12 => {
+                self.dmc.sample_address = 0xC000 + (value as u16) * 64;
+            }
+            0x13 => {
+                self.dmc.sample_length = (value as u16) * 16 + 1;
+            }
             0x15 => {
-                //TODO: DMC
+                if value & 0b10000 != 0 {
+                    if self.dmc.bytes_remaining == 0 {
+                        self.dmc.restart();
+                    }
+                } else {
+                    self.dmc.bytes_remaining = 0;
+                }
+                self.dmc.interrupt_flag = false;
                 self.noise.length_counter.set_enable((value & 0b1000) == 0b1000);
                 self.triangle.length_counter.set_enable((value & 0b100) == 0b100);
                 self.pulse2.length_counter.set_enable((value & 0b10) == 0b10);
@@ -596,47 +734,43 @@ impl Apu {
                     &mut self.noise,
                 );
             }
-            _ => {} //TODO
+            _ => {}
         }
-        // println!(
-        //   "4000: {:02b}{}{}{:04b}",
-        //   self.pulse1.duty,
-        //   if self.pulse1.length_counter_halt { 1 } else { 0 },
-        //   if self.pulse1.constant_volume { 1 } else { 0 },
-        //   self.pulse1.volume
-        // );
-        // println!(
-        //   "4001: {}{:03b}{}{:03b}",
-        //   if self.pulse1.sweep.enabled_flag { 1 } else { 0 },
-        //   self.pulse1.sweep.divider_period,
-        //   if self.pulse1.sweep.negate_flag { 1 } else { 0 },
-        //   self.pulse1.sweep.shift_count
-        // );
-        // println!("4002: {:08b}", self.pulse1.timer & 0xFF);
-        // println!(
-        //   "4003: {:05b}{:03b}",
-        //   self.pulse1.length_counter.length & 0x1F,
-        //   (self.pulse1.timer & 0x700) >> 8
-        // );
-        // println!("----------------");
     }
+
     pub fn read(&mut self, addr: u8) -> u8 {
         match addr {
             0x15 => {
                 let mut value: u8 = 0;
-                //TODO
-                value |= if self.frame_counter.interrupt_flag { 1 } else { 0 } << 6;
+                if self.dmc.interrupt_flag {
+                    value |= 1 << 7;
+                }
+                if self.frame_counter.interrupt_flag {
+                    value |= 1 << 6;
+                }
                 self.frame_counter.interrupt_flag = false;
-                value |= if self.noise.length_counter.length > 0 { 1 } else { 0 } << 3;
-                value |= if self.triangle.length_counter.length > 0 { 1 } else { 0 } << 2;
-                value |= if self.pulse2.length_counter.length > 0 { 1 } else { 0 } << 1;
-                value |= if self.pulse1.length_counter.length > 0 { 1 } else { 0 };
+                if self.dmc.bytes_remaining > 0 {
+                    value |= 1 << 4;
+                }
+                if self.noise.length_counter.length > 0 {
+                    value |= 1 << 3;
+                }
+                if self.triangle.length_counter.length > 0 {
+                    value |= 1 << 2;
+                }
+                if self.pulse2.length_counter.length > 0 {
+                    value |= 1 << 1;
+                }
+                if self.pulse1.length_counter.length > 0 {
+                    value |= 1;
+                }
                 value
             }
-            _ => panic!(),
+            _ => 0,
         }
     }
+
     pub fn check_irq(&self) -> bool {
-        self.frame_counter.interrupt_flag
+        self.frame_counter.interrupt_flag || self.dmc.interrupt_flag
     }
 }

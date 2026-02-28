@@ -3,4 +3,7 @@ mod cpu;
 pub mod nes;
 mod ppu;
 mod rom;
-mod util;
+pub mod util;
+
+#[cfg(test)]
+mod tests;
