@@ -11,11 +11,13 @@ env:
 jobs:
   build-win:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
     - name: Set up cargo cache
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       continue-on-error: false
       with:
         path: |
@@ -31,20 +33,11 @@ jobs:
     - name: Create zip archive
       working-directory: ./src/win/target/release
       run: powershell Compress-Archive -Path y_nes_win.exe,SDL2.dll -DestinationPath yNES-windows-${{github.ref_name}}.zip
-    - name: Get the upload URL for a release
-      id: get_release
-      uses: bruceadams/get-release@v1.3.2
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-    - name: Upload artifact
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
+    - name: Upload release asset
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v2
       with:
-        upload_url: ${{ steps.get_release.outputs.upload_url }}
-        asset_path: ./src/win/target/release/yNES-windows-${{github.ref_name}}.zip
-        asset_name: yNES-windows-${{github.ref_name}}.zip
-        asset_content_type: application/zip
+        files: ./src/win/target/release/yNES-windows-${{github.ref_name}}.zip
 
   build-wasm:
     runs-on: ubuntu-latest
@@ -52,7 +45,7 @@ jobs:
       pages: write      # to deploy to Pages
       id-token: write   # to verify the deployment originates from an appropriate source
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
     - name: install wasm-pack
       run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -65,9 +58,9 @@ jobs:
         mkdir artifact
         cp -r index.html *.js pkg artifact
     - name: Upload artifact
-      uses: actions/upload-pages-artifact@v1
+      uses: actions/upload-pages-artifact@v3
       with:
         path: './src/wasm/artifact'
     - name: Deploy to GitHub Pages
       id: deployment
-      uses: actions/deploy-pages@v2
+      uses: actions/deploy-pages@v4
